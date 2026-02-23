@@ -7,15 +7,26 @@ import { extractKeywords, confirmSuggestions } from './groq';
 
 /**
  * Canonicalises a URL for reliable equality checks.
- * Normalises scheme (http→https), www prefix, and trailing slash.
- * Query strings and fragments must be stripped before calling this.
+ * Uses the URL constructor to strip query strings and fragments, then
+ * normalises scheme (http→https), www prefix, and trailing slash.
  */
 export function normalizeUrl(u) {
-  return u
-    .toLowerCase()
-    .replace(/^http:\/\//, 'https://')
-    .replace(/^https:\/\/www\./, 'https://')
-    .replace(/\/$/, '');
+  try {
+    const parsed = new URL(u);
+    return (parsed.origin + parsed.pathname)
+      .toLowerCase()
+      .replace(/^http:\/\//, 'https://')
+      .replace(/^https:\/\/www\./, 'https://')
+      .replace(/\/$/, '');
+  } catch {
+    // Fallback for relative or malformed URLs
+    return u
+      .toLowerCase()
+      .replace(/[?#].*$/, '')
+      .replace(/^http:\/\//, 'https://')
+      .replace(/^https:\/\/www\./, 'https://')
+      .replace(/\/$/, '');
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -23,37 +34,18 @@ export function normalizeUrl(u) {
 // ---------------------------------------------------------------------------
 
 /**
- * Fetches a URL and returns:
- *   - title: page <title> text
- *   - content: stripped plain-text body (max 15 000 chars)
- *   - existingHrefs: Set of normalised absolute URLs already linked from the page
+ * Fetches a page and returns { title, content } as clean plain text.
  */
 async function fetchPageContent(url) {
   const res = await fetch(url, {
     headers: { 'User-Agent': 'BackLinker/1.0 (internal tool)' },
+    signal: AbortSignal.timeout(15000),
   });
   if (!res.ok) throw new Error(`Failed to fetch ${url}: ${res.status} ${res.statusText}`);
   const html = await res.text();
 
   const titleMatch = html.match(/<title[^>]*>([^<]*)<\/title>/i);
   const title = titleMatch ? titleMatch[1].trim() : url;
-
-  // Capture full href values (including query strings); the URL constructor
-  // handles parsing so we can take only origin + pathname.
-  const rawHrefValues = [...html.matchAll(/href=["']([^"'\s]+)["']/gi)].map((m) => m[1]);
-  const existingHrefs = new Set(
-    rawHrefValues.flatMap((href) => {
-      try {
-        const parsed = new URL(href, url);
-        return [normalizeUrl(parsed.origin + parsed.pathname)];
-      } catch {
-        return [];
-      }
-    }),
-  );
-
-  console.log(`[analyze] ${existingHrefs.size} unique hrefs extracted from <${url}>`);
-  console.log('[analyze] Sample extracted hrefs:', [...existingHrefs].slice(0, 15));
 
   const content = html
     .replace(/<script[\s\S]*?<\/script>/gi, '')
@@ -66,7 +58,34 @@ async function fetchPageContent(url) {
     .trim()
     .slice(0, 15000);
 
-  return { title, content, existingHrefs };
+  return { title, content };
+}
+
+/**
+ * Fetches a source page and returns the Set of normalised URLs it already
+ * links to. Uses the URL constructor to resolve relative hrefs and strip
+ * query strings before normalising.
+ */
+async function fetchSourceHrefs(sourceUrl) {
+  const res = await fetch(sourceUrl, {
+    headers: { 'User-Agent': 'BackLinker/1.0 (internal tool)' },
+    signal: AbortSignal.timeout(15000),
+  });
+  if (!res.ok) throw new Error(`HTTP ${res.status} ${res.statusText}`);
+  const html = await res.text();
+
+  const rawHrefs = [...html.matchAll(/href=["']([^"'\s]+)["']/gi)].map((m) => m[1]);
+  return new Set(
+    rawHrefs.flatMap((href) => {
+      try {
+        const parsed = new URL(href, sourceUrl);
+        // origin + pathname strips query strings and fragments
+        return [normalizeUrl(parsed.origin + parsed.pathname)];
+      } catch {
+        return [];
+      }
+    }),
+  );
 }
 
 function splitSentences(text) {
@@ -88,7 +107,7 @@ function splitSentences(text) {
  *                           anchorSource, context, reason }
  */
 export async function analyzeUrl(url) {
-  const { title: newPostTitle, content: newPostContent, existingHrefs } = await fetchPageContent(url);
+  const { title: newPostTitle, content: newPostContent } = await fetchPageContent(url);
 
   const { primary, variations } = await extractKeywords(newPostContent);
   const allKeywords = [primary, ...variations].map((k) => k.toLowerCase());
@@ -124,15 +143,39 @@ export async function analyzeUrl(url) {
     candidates.slice(0, 15),
   );
 
-  console.log('[analyze] Checking confirmed suggestions against existing hrefs:');
-  const suggestions = confirmed.filter((s) => {
-    const normalised = normalizeUrl(s.sourceUrl);
-    const alreadyLinked = existingHrefs.has(normalised);
-    console.log(`  ${alreadyLinked ? '✗ REMOVED' : '✓ kept  '} ${normalised}`);
-    return !alreadyLinked;
-  });
+  // For each confirmed suggestion, fetch the SOURCE page and check whether it
+  // already contains a link to the TARGET (url). This is the correct direction:
+  // we want to know "does [sourceUrl] already link to [url]?"
+  const targetNormalized = normalizeUrl(url);
+  console.log(`[analyze] Target URL normalised: ${targetNormalized}`);
+  console.log(`[analyze] Checking ${confirmed.length} confirmed suggestion(s) for existing links…`);
+
+  const suggestions = [];
+  let filteredCount = 0;
+
+  for (const s of confirmed) {
+    try {
+      const sourceHrefs = await fetchSourceHrefs(s.sourceUrl);
+      const alreadyLinked = sourceHrefs.has(targetNormalized);
+      console.log(
+        `  ${alreadyLinked ? '✗ FILTERED' : '✓ kept   '} ${s.sourceUrl}` +
+        (alreadyLinked ? ' — already links to target' : ''),
+      );
+      if (alreadyLinked) {
+        filteredCount++;
+      } else {
+        suggestions.push(s);
+      }
+    } catch (err) {
+      // If the source page can't be fetched, keep the suggestion rather than
+      // silently dropping it.
+      console.log(`  ? kept    ${s.sourceUrl} — could not fetch source (${err.message})`);
+      suggestions.push(s);
+    }
+  }
+
   console.log(
-    `[analyze] ${confirmed.length} confirmed → ${suggestions.length} kept, ${confirmed.length - suggestions.length} removed.`,
+    `[analyze] Result: ${confirmed.length} confirmed → ${suggestions.length} kept, ${filteredCount} filtered (already linked).`,
   );
 
   return { newPostTitle, primary, variations, suggestions };
