@@ -118,8 +118,13 @@ export async function GET(request) {
       .slice(0, MAX_PER_RUN);
 
     // ----- 3. Determine which URLs are brand new -----------------------------
+    const SKIP_PATTERNS = ['/category/', '/author/', '/tag/', '/page/', '/contributors/'];
+    const isContentPage = (u) => !SKIP_PATTERNS.some((p) => u.includes(p));
+
     const remainingSlots = MAX_PER_RUN - nullContentUrls.length;
-    const newUrls = sitemapUrls.filter((u) => !existingUrlSet.has(u)).slice(0, remainingSlots);
+    const newUrls = sitemapUrls
+      .filter((u) => !existingUrlSet.has(u) && isContentPage(u))
+      .slice(0, remainingSlots);
     log.push(`Backfill queue: ${nullContentUrls.length}, new URLs: ${newUrls.length} (budget: ${MAX_PER_RUN}/run).`);
 
     // ----- 4. Scrape and insert new pages ------------------------------------
