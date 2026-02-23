@@ -3,7 +3,7 @@ export const maxDuration = 60;
 import { NextResponse } from 'next/server';
 import { getSupabase } from '@/lib/supabase';
 import { generatePageMetadata } from '@/lib/groq';
-import { analyzeUrl, saveSuggestions } from '@/lib/analyze';
+import { analyzeUrl, saveSuggestions, processLinkChecks } from '@/lib/analyze';
 
 // Total pages to process per cron run across both backfill and new URLs.
 // Backfills are prioritised first; any remaining slots go to new URLs.
@@ -191,6 +191,13 @@ export async function GET(request) {
         log.push(`    ERROR: ${err.message}`);
       }
       await sleep(SCRAPE_DELAY_MS);
+    }
+    // ----- 6. Process deferred link checks on pending suggestions -----------
+    try {
+      const linkCheck = await processLinkChecks(3);
+      log.push(`Link check: ${linkCheck.processed} checked, ${linkCheck.filtered} filtered.`);
+    } catch (err) {
+      log.push(`Link check skipped: ${err.message}`);
     }
   } catch (err) {
     log.push(`FATAL: ${err.message}`);

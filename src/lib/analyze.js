@@ -19,7 +19,6 @@ export function normalizeUrl(u) {
       .replace(/^https:\/\/www\./, 'https://')
       .replace(/\/$/, '');
   } catch {
-    // Fallback for relative or malformed URLs
     return u
       .toLowerCase()
       .replace(/[?#].*$/, '')
@@ -38,7 +37,7 @@ export function normalizeUrl(u) {
  */
 async function fetchPageContent(url) {
   const res = await fetch(url, {
-    headers: { 'User-Agent': 'BackLinker/1.0 (internal tool)' },
+    headers: { 'User-Agent': 'Mozilla/5.0 (compatible; BacklinkerBot/1.0)' },
     signal: AbortSignal.timeout(15000),
   });
   if (!res.ok) throw new Error(`Failed to fetch ${url}: ${res.status} ${res.statusText}`);
@@ -63,12 +62,11 @@ async function fetchPageContent(url) {
 
 /**
  * Fetches a source page and returns the Set of normalised URLs it already
- * links to. Uses the URL constructor to resolve relative hrefs and strip
- * query strings before normalising.
+ * links to. Exported so it can be used by the process-suggestions route.
  */
-async function fetchSourceHrefs(sourceUrl) {
+export async function fetchSourceHrefs(sourceUrl) {
   const res = await fetch(sourceUrl, {
-    headers: { 'User-Agent': 'BackLinker/1.0 (internal tool)' },
+    headers: { 'User-Agent': 'Mozilla/5.0 (compatible; BacklinkerBot/1.0)' },
     signal: AbortSignal.timeout(15000),
   });
   if (!res.ok) throw new Error(`HTTP ${res.status} ${res.statusText}`);
@@ -79,7 +77,6 @@ async function fetchSourceHrefs(sourceUrl) {
     rawHrefs.flatMap((href) => {
       try {
         const parsed = new URL(href, sourceUrl);
-        // origin + pathname strips query strings and fragments
         return [normalizeUrl(parsed.origin + parsed.pathname)];
       } catch {
         return [];
@@ -100,11 +97,12 @@ function splitSentences(text) {
 // ---------------------------------------------------------------------------
 
 /**
- * Runs the full backlink analysis pipeline for a given URL.
+ * Runs the keyword extraction and candidate-finding pipeline for a URL.
+ * Saves all Groq-confirmed suggestions immediately as pending WITHOUT
+ * checking whether the source page already links to the target — that
+ * slower per-page check is deferred to processLinkChecks().
  *
  * Returns: { newPostTitle, primary, variations, suggestions }
- *   suggestions: Array of { sourceUrl, sourceTitle, suggestedAnchorText,
- *                           anchorSource, context, reason }
  */
 export async function analyzeUrl(url) {
   const { title: newPostTitle, content: newPostContent } = await fetchPageContent(url);
@@ -137,45 +135,10 @@ export async function analyzeUrl(url) {
     }
   }
 
-  const confirmed = await confirmSuggestions(
+  const suggestions = await confirmSuggestions(
     newPostTitle,
     newPostContent.slice(0, 500),
     candidates.slice(0, 15),
-  );
-
-  // For each confirmed suggestion, fetch the SOURCE page and check whether it
-  // already contains a link to the TARGET (url). This is the correct direction:
-  // we want to know "does [sourceUrl] already link to [url]?"
-  const targetNormalized = normalizeUrl(url);
-  console.log(`[analyze] Target URL normalised: ${targetNormalized}`);
-  console.log(`[analyze] Checking ${confirmed.length} confirmed suggestion(s) for existing links…`);
-
-  const suggestions = [];
-  let filteredCount = 0;
-
-  for (const s of confirmed) {
-    try {
-      const sourceHrefs = await fetchSourceHrefs(s.sourceUrl);
-      const alreadyLinked = sourceHrefs.has(targetNormalized);
-      console.log(
-        `  ${alreadyLinked ? '✗ FILTERED' : '✓ kept   '} ${s.sourceUrl}` +
-        (alreadyLinked ? ' — already links to target' : ''),
-      );
-      if (alreadyLinked) {
-        filteredCount++;
-      } else {
-        suggestions.push(s);
-      }
-    } catch (err) {
-      // If the source page can't be fetched, keep the suggestion rather than
-      // silently dropping it.
-      console.log(`  ? kept    ${s.sourceUrl} — could not fetch source (${err.message})`);
-      suggestions.push(s);
-    }
-  }
-
-  console.log(
-    `[analyze] Result: ${confirmed.length} confirmed → ${suggestions.length} kept, ${filteredCount} filtered (already linked).`,
   );
 
   return { newPostTitle, primary, variations, suggestions };
@@ -187,7 +150,8 @@ export async function analyzeUrl(url) {
 
 /**
  * Upserts a list of suggestions into the Supabase suggestions table.
- * Re-analyzing the same URL will update existing rows rather than duplicate them.
+ * Re-analyzing the same URL updates existing rows rather than duplicating.
+ * link_checked defaults to false so processLinkChecks() will pick them up.
  */
 export async function saveSuggestions(targetUrl, targetTitle, suggestions) {
   if (!suggestions.length) return;
@@ -209,4 +173,57 @@ export async function saveSuggestions(targetUrl, targetTitle, suggestions) {
     .upsert(rows, { onConflict: 'target_url,source_url' });
 
   if (error) console.error('[saveSuggestions] Supabase upsert failed:', error.message);
+}
+
+// ---------------------------------------------------------------------------
+// Deferred link-check filtering
+// ---------------------------------------------------------------------------
+
+/**
+ * Processes a batch of pending, unchecked suggestions.
+ * For each one, fetches the source page and checks whether it already links
+ * to the target. Already-linked suggestions are deleted; clean ones have
+ * link_checked set to true so they won't be processed again.
+ *
+ * Returns: { processed, filtered }
+ */
+export async function processLinkChecks(batchSize = 3) {
+  const { data: pending, error } = await getSupabase()
+    .from('suggestions')
+    .select('id, source_url, target_url')
+    .eq('status', 'pending')
+    .eq('link_checked', false)
+    .order('created_at', { ascending: true })
+    .limit(batchSize);
+
+  if (error) throw new Error(`Supabase query failed: ${error.message}`);
+  if (!pending?.length) {
+    console.log('[processLinkChecks] No unchecked pending suggestions.');
+    return { processed: 0, filtered: 0 };
+  }
+
+  console.log(`[processLinkChecks] Checking ${pending.length} suggestion(s)…`);
+  let filtered = 0;
+
+  for (const s of pending) {
+    const targetNormalized = normalizeUrl(s.target_url);
+    try {
+      const sourceHrefs = await fetchSourceHrefs(s.source_url);
+      if (sourceHrefs.has(targetNormalized)) {
+        await getSupabase().from('suggestions').delete().eq('id', s.id);
+        console.log(`  ✗ DELETED (already linked): ${s.source_url}`);
+        filtered++;
+      } else {
+        await getSupabase().from('suggestions').update({ link_checked: true }).eq('id', s.id);
+        console.log(`  ✓ kept: ${s.source_url}`);
+      }
+    } catch (err) {
+      // Source page unreachable — mark checked so we don't retry indefinitely
+      await getSupabase().from('suggestions').update({ link_checked: true }).eq('id', s.id);
+      console.log(`  ? kept (fetch failed): ${s.source_url} — ${err.message}`);
+    }
+  }
+
+  console.log(`[processLinkChecks] Done: ${pending.length} checked, ${filtered} filtered.`);
+  return { processed: pending.length, filtered };
 }
