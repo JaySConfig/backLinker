@@ -166,6 +166,21 @@ h1 {
   letter-spacing: 0.05em;
   color: #9ca3af;
   margin-bottom: 0.2rem;
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+}
+
+.anchor-badge {
+  font-size: 0.65rem;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  background: #fef3c7;
+  color: #92400e;
+  border: 1px solid #fcd34d;
+  padding: 0.1rem 0.4rem;
+  border-radius: 4px;
+  font-weight: 600;
 }
 
 .suggestion-card .anchor-text {

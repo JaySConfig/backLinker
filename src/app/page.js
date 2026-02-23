@@ -115,7 +115,12 @@ export default function Home() {
                   {s.sourceUrl}
                 </a>
               </div>
-              <div className="anchor-label">Suggested anchor text</div>
+              <div className="anchor-label">
+                Suggested anchor text
+                {s.anchorSource === 'variation' && (
+                  <span className="anchor-badge">variation</span>
+                )}
+              </div>
               <div className="anchor-text">"{s.suggestedAnchorText}"</div>
               <div className="context-sentence">{s.context}</div>
               <div className="reason">{s.reason}</div>

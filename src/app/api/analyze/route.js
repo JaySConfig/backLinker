@@ -3,8 +3,8 @@ import { supabase } from '@/lib/supabase';
 import { extractKeywords, confirmSuggestions } from '@/lib/groq';
 
 /**
- * Fetches a URL and returns its plain-text body content.
- * Strips HTML tags to give Groq clean text.
+ * Fetches a URL and returns its plain-text body content plus the set of
+ * already-linked hrefs (normalised, absolute URLs) found on the page.
  */
 async function fetchPageContent(url) {
   const res = await fetch(url, {
@@ -19,6 +19,19 @@ async function fetchPageContent(url) {
   const titleMatch = html.match(/<title[^>]*>([^<]*)<\/title>/i);
   const title = titleMatch ? titleMatch[1].trim() : url;
 
+  // Collect every href on the page and resolve relative paths to absolute URLs.
+  // Both /page and https://example.com/page forms are handled.
+  const existingHrefs = new Set(
+    [...html.matchAll(/href=["']([^"'#?\s]+)["']/gi)]
+      .flatMap(([, href]) => {
+        try {
+          return [normalizeUrl(new URL(href, url).href)];
+        } catch {
+          return [];
+        }
+      }),
+  );
+
   // Strip scripts, styles, nav, header, footer to reduce noise
   const stripped = html
     .replace(/<script[\s\S]*?<\/script>/gi, '')
@@ -30,7 +43,12 @@ async function fetchPageContent(url) {
     .replace(/\s{2,}/g, ' ')
     .trim();
 
-  return { title, content: stripped.slice(0, 15000) }; // cap at 15k chars for Groq
+  return { title, content: stripped.slice(0, 15000), existingHrefs };
+}
+
+/** Strips trailing slash and lowercases for reliable URL comparison. */
+function normalizeUrl(u) {
+  return u.toLowerCase().replace(/\/$/, '');
 }
 
 /**
@@ -63,8 +81,8 @@ export async function POST(request) {
       return NextResponse.json({ error: 'A valid URL is required.' }, { status: 400 });
     }
 
-    // --- Step 1: Fetch the new post and extract keywords ---
-    const { title: newPostTitle, content: newPostContent } = await fetchPageContent(url);
+    // --- Step 1: Fetch the new post, extract keywords, and capture existing links ---
+    const { title: newPostTitle, content: newPostContent, existingHrefs } = await fetchPageContent(url);
 
     const { primary, variations } = await extractKeywords(newPostContent);
     const allKeywords = [primary, ...variations].map((k) => k.toLowerCase());
@@ -122,7 +140,12 @@ export async function POST(request) {
 
     // --- Step 4: Ask Groq to confirm and polish the suggestions ---
     const newPostSummary = newPostContent.slice(0, 500);
-    const suggestions = await confirmSuggestions(newPostTitle, newPostSummary, cappedCandidates);
+    const confirmed = await confirmSuggestions(newPostTitle, newPostSummary, cappedCandidates);
+
+    // --- Step 5: Remove suggestions where the source page is already linked ---
+    const suggestions = confirmed.filter(
+      (s) => !existingHrefs.has(normalizeUrl(s.sourceUrl)),
+    );
 
     return NextResponse.json({
       newPostTitle,
