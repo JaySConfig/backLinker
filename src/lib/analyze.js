@@ -1,4 +1,4 @@
-import { supabase } from './supabase';
+import { getSupabase } from './supabase';
 import { extractKeywords, confirmSuggestions } from './groq';
 
 // ---------------------------------------------------------------------------
@@ -95,7 +95,7 @@ export async function analyzeUrl(url) {
 
   const ilikeFilters = allKeywords.map((kw) => `content.ilike.%${kw}%`).join(',');
 
-  const { data: matchingPages, error: dbError } = await supabase
+  const { data: matchingPages, error: dbError } = await getSupabase()
     .from('pages')
     .select('url, title, summary, content')
     .or(ilikeFilters)
@@ -161,7 +161,7 @@ export async function saveSuggestions(targetUrl, targetTitle, suggestions) {
     status: 'pending',
   }));
 
-  const { error } = await supabase
+  const { error } = await getSupabase()
     .from('suggestions')
     .upsert(rows, { onConflict: 'target_url,source_url' });
 

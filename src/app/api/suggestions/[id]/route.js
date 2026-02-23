@@ -1,5 +1,5 @@
 import { NextResponse } from 'next/server';
-import { supabase } from '@/lib/supabase';
+import { getSupabase } from '@/lib/supabase';
 
 const VALID_STATUSES = ['pending', 'accepted', 'dismissed'];
 
@@ -11,7 +11,7 @@ export async function PATCH(request, { params }) {
     return NextResponse.json({ error: `status must be one of: ${VALID_STATUSES.join(', ')}` }, { status: 400 });
   }
 
-  const { error } = await supabase
+  const { error } = await getSupabase()
     .from('suggestions')
     .update({ status })
     .eq('id', id);

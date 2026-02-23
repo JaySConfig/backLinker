@@ -1,9 +1,9 @@
-import { supabase } from '@/lib/supabase';
+import { getSupabase } from '@/lib/supabase';
 import AnalyzeForm from './AnalyzeForm';
 import SuggestionsList from './SuggestionsList';
 
 async function getSuggestionGroups() {
-  const { data, error } = await supabase
+  const { data, error } = await getSupabase()
     .from('suggestions')
     .select('*')
     .order('created_at', { ascending: false });

@@ -1,5 +1,5 @@
 import { NextResponse } from 'next/server';
-import { supabase } from '@/lib/supabase';
+import { getSupabase } from '@/lib/supabase';
 import { generatePageMetadata } from '@/lib/groq';
 import { analyzeUrl, saveSuggestions } from '@/lib/analyze';
 
@@ -104,7 +104,7 @@ export async function GET(request) {
     log.push(`Sitemap contains ${sitemapUrls.length} URL(s).`);
 
     // ----- 2. Load all existing URLs from Supabase ---------------------------
-    const { data: existingRows, error: fetchErr } = await supabase
+    const { data: existingRows, error: fetchErr } = await getSupabase()
       .from('pages')
       .select('url, content');
     if (fetchErr) throw new Error(`Supabase select failed: ${fetchErr.message}`);
@@ -129,7 +129,7 @@ export async function GET(request) {
         const { title, content } = await scrapePage(url);
         const { summary, keywords } = await generatePageMetadata(title, content);
 
-        const { error: insertErr } = await supabase.from('pages').upsert(
+        const { error: insertErr } = await getSupabase().from('pages').upsert(
           { url, title, summary, keywords, content },
           { onConflict: 'url' },
         );
@@ -160,7 +160,7 @@ export async function GET(request) {
         const { title, content } = await scrapePage(url);
 
         // Only call Groq if we also need to generate summary/keywords
-        const { data: existingMeta } = await supabase
+        const { data: existingMeta } = await getSupabase()
           .from('pages')
           .select('summary, keywords')
           .eq('url', url)
@@ -174,7 +174,7 @@ export async function GET(request) {
           update = { content, summary, keywords };
         }
 
-        const { error: updateErr } = await supabase.from('pages').update(update).eq('url', url);
+        const { error: updateErr } = await getSupabase().from('pages').update(update).eq('url', url);
         if (updateErr) throw new Error(updateErr.message);
 
         stats.backfilled++;
