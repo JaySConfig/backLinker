@@ -134,81 +134,129 @@ h1 {
   font-size: 0.95rem;
 }
 
+/* ---- Suggestion card (self-contained) ---- */
 .suggestion-card {
   background: #fff;
   border: 1px solid #e5e7eb;
   border-radius: 10px;
-  padding: 1.25rem 1.5rem;
+  overflow: hidden;
   margin-bottom: 1rem;
   transition: box-shadow 0.2s;
 }
 
 .suggestion-card:hover {
-  box-shadow: 0 2px 12px rgba(79, 70, 229, 0.1);
+  box-shadow: 0 2px 12px rgba(79, 70, 229, 0.08);
 }
 
-.suggestion-card .source-title {
-  font-weight: 600;
-  font-size: 0.95rem;
-  margin-bottom: 0.25rem;
+/* Source / target endpoint blocks */
+.card-endpoint {
+  padding: 0.75rem 1.25rem;
 }
 
-.suggestion-card .source-url {
-  font-size: 0.8rem;
+.card-source {
+  background: #eef2ff;
+  border-bottom: 1px solid #c7d2fe;
+}
+
+.card-target {
+  background: #f0fdf4;
+  border-top: 1px solid #bbf7d0;
+}
+
+.endpoint-label {
+  display: block;
+  font-size: 0.65rem;
+  text-transform: uppercase;
+  letter-spacing: 0.09em;
+  font-weight: 700;
   color: #6b7280;
-  margin-bottom: 0.75rem;
+  margin-bottom: 0.2rem;
+}
+
+.card-source .endpoint-label { color: #6366f1; }
+.card-target .endpoint-label { color: #16a34a; }
+
+.endpoint-title {
+  display: block;
+  font-weight: 600;
+  font-size: 0.9rem;
+  color: #111827;
+  margin-bottom: 0.15rem;
+}
+
+.endpoint-url {
+  display: block;
+  font-size: 0.75rem;
+  color: #6b7280;
   word-break: break-all;
 }
 
-.suggestion-card .anchor-label {
-  font-size: 0.75rem;
-  text-transform: uppercase;
-  letter-spacing: 0.05em;
-  color: #9ca3af;
-  margin-bottom: 0.2rem;
-  display: flex;
-  align-items: center;
-  gap: 0.4rem;
+.endpoint-url:hover { text-decoration: underline; }
+
+/* Context sentence with inline highlight */
+.card-sentence {
+  font-size: 0.875rem;
+  color: #374151;
+  line-height: 1.65;
+  padding: 0.9rem 1.25rem;
+  border-left: 3px solid #818cf8;
+  font-style: italic;
+  position: relative;
+}
+
+.anchor-highlight {
+  background: #fef08a;
+  color: #713f12;
+  border-radius: 3px;
+  padding: 0 2px;
+  font-style: normal;
+  font-weight: 600;
 }
 
 .anchor-badge {
-  font-size: 0.65rem;
+  display: inline-block;
+  font-size: 0.62rem;
   text-transform: uppercase;
   letter-spacing: 0.04em;
   background: #fef3c7;
   color: #92400e;
   border: 1px solid #fcd34d;
-  padding: 0.1rem 0.4rem;
+  padding: 0.1rem 0.35rem;
   border-radius: 4px;
   font-weight: 600;
+  vertical-align: middle;
+  margin-left: 0.4rem;
 }
 
-.suggestion-card .anchor-text {
-  display: inline-block;
-  background: #f0fdf4;
-  border: 1px solid #86efac;
-  color: #166534;
-  padding: 0.2rem 0.65rem;
-  border-radius: 6px;
-  font-size: 0.9rem;
-  font-weight: 600;
-  margin-bottom: 0.75rem;
+/* Arrow connector */
+.card-connector {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0 1.25rem;
+  background: #fff;
 }
 
-.suggestion-card .context-sentence {
-  font-size: 0.875rem;
-  color: #374151;
-  background: #f9fafb;
-  border-left: 3px solid #4f46e5;
-  padding: 0.5rem 0.75rem;
-  border-radius: 0 6px 6px 0;
-  margin-bottom: 0.75rem;
-  font-style: italic;
+.connector-line {
+  flex: 1;
+  height: 1px;
+  background: #e5e7eb;
 }
 
-.suggestion-card .reason {
-  font-size: 0.825rem;
-  color: #6b7280;
+.connector-arrow {
+  font-size: 0.75rem;
+  font-weight: 700;
+  color: #9ca3af;
+  line-height: 1;
+  padding: 0.35rem 0;
+}
+
+/* Action buttons row */
+.card-actions {
+  display: flex;
+  gap: 0.5rem;
+  padding: 0.75rem 1.25rem;
+  border-top: 1px solid #f3f4f6;
 }
 
 .loader {
@@ -274,50 +322,10 @@ h1 {
   border-radius: 20px;
 }
 
-/* ---- Target group ---- */
-.target-group {
-  margin-bottom: 2rem;
-}
-
-.target-header {
-  background: #fff;
-  border: 1px solid #e5e7eb;
-  border-radius: 10px 10px 0 0;
-  border-bottom: 2px solid #4f46e5;
-  padding: 0.9rem 1.25rem;
+/* ---- Flat suggestions list ---- */
+.suggestions-list {
   display: flex;
-  flex-wrap: wrap;
-  align-items: baseline;
-  gap: 0.5rem 1rem;
-}
-
-.target-title {
-  font-weight: 700;
-  font-size: 0.95rem;
-  flex: 1 1 100%;
-}
-
-.target-url {
-  font-size: 0.8rem;
-  color: #4f46e5;
-  word-break: break-all;
-}
-
-.suggestion-count {
-  margin-left: auto;
-  font-size: 0.75rem;
-  color: #6b7280;
-  white-space: nowrap;
-}
-
-/* Round off the last card in a group */
-.target-group .suggestion-card {
-  border-radius: 0;
-  border-top: none;
-}
-
-.target-group .suggestion-card:last-child {
-  border-radius: 0 0 10px 10px;
+  flex-direction: column;
 }
 
 /* ---- Action buttons ---- */
