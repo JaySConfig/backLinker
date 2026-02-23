@@ -23,7 +23,7 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
  */
 async function fetchSitemapUrls(sitemapUrl) {
   const res = await fetch(sitemapUrl, {
-    headers: { 'User-Agent': 'BackLinker-Cron/1.0 (internal tool)' },
+    headers: { 'User-Agent': 'Mozilla/5.0 (compatible; BacklinkerBot/1.0)' },
   });
   if (!res.ok) throw new Error(`Sitemap fetch failed: ${res.status} ${res.statusText}`);
   const xml = await res.text();
