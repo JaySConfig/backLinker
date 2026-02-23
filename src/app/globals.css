@@ -238,3 +238,159 @@ h1 {
   font-size: 0.85rem;
   color: #4f46e5;
 }
+
+/* ---- Analyze section separator ---- */
+.analyze-section {
+  margin-bottom: 2.5rem;
+}
+
+.inline-results {
+  margin-top: 1.5rem;
+}
+
+/* ---- Dashboard ---- */
+.dashboard-section {
+  margin-top: 0.5rem;
+}
+
+.dashboard-header {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  margin-bottom: 1.25rem;
+}
+
+.dashboard-title {
+  font-size: 1.1rem;
+  font-weight: 700;
+}
+
+.pending-badge {
+  font-size: 0.75rem;
+  font-weight: 600;
+  background: #4f46e5;
+  color: #fff;
+  padding: 0.2rem 0.6rem;
+  border-radius: 20px;
+}
+
+/* ---- Target group ---- */
+.target-group {
+  margin-bottom: 2rem;
+}
+
+.target-header {
+  background: #fff;
+  border: 1px solid #e5e7eb;
+  border-radius: 10px 10px 0 0;
+  border-bottom: 2px solid #4f46e5;
+  padding: 0.9rem 1.25rem;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 0.5rem 1rem;
+}
+
+.target-title {
+  font-weight: 700;
+  font-size: 0.95rem;
+  flex: 1 1 100%;
+}
+
+.target-url {
+  font-size: 0.8rem;
+  color: #4f46e5;
+  word-break: break-all;
+}
+
+.suggestion-count {
+  margin-left: auto;
+  font-size: 0.75rem;
+  color: #6b7280;
+  white-space: nowrap;
+}
+
+/* Round off the last card in a group */
+.target-group .suggestion-card {
+  border-radius: 0;
+  border-top: none;
+}
+
+.target-group .suggestion-card:last-child {
+  border-radius: 0 0 10px 10px;
+}
+
+/* ---- Action buttons ---- */
+.card-actions {
+  display: flex;
+  gap: 0.5rem;
+  margin-top: 0.75rem;
+}
+
+.action-btn {
+  padding: 0.3rem 0.85rem;
+  border-radius: 6px;
+  font-size: 0.8rem;
+  font-weight: 600;
+  cursor: pointer;
+  border: 1.5px solid transparent;
+  transition: opacity 0.15s;
+}
+
+.action-btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.btn-accept {
+  background: #f0fdf4;
+  border-color: #86efac;
+  color: #166534;
+}
+
+.btn-accept:hover:not(:disabled) {
+  background: #dcfce7;
+}
+
+.btn-dismiss {
+  background: #fff;
+  border-color: #d1d5db;
+  color: #6b7280;
+}
+
+.btn-dismiss:hover:not(:disabled) {
+  background: #f3f4f6;
+}
+
+.btn-restore {
+  background: #fff;
+  border-color: #d1d5db;
+  color: #6b7280;
+  font-size: 0.75rem;
+}
+
+.btn-restore:hover:not(:disabled) {
+  background: #f3f4f6;
+}
+
+.status-badge {
+  font-size: 0.75rem;
+  font-weight: 600;
+  padding: 0.2rem 0.6rem;
+  border-radius: 20px;
+}
+
+.status-accepted {
+  background: #f0fdf4;
+  color: #166534;
+  border: 1px solid #86efac;
+}
+
+/* Dim cards that are no longer pending */
+.card-accepted {
+  opacity: 0.6;
+}
+
+.card-dismissed {
+  opacity: 0.35;
+}

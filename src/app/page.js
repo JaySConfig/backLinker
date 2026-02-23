@@ -1,133 +1,61 @@
-'use client';
+import { supabase } from '@/lib/supabase';
+import AnalyzeForm from './AnalyzeForm';
+import SuggestionsList from './SuggestionsList';
 
-import { useState } from 'react';
+async function getSuggestionGroups() {
+  const { data, error } = await supabase
+    .from('suggestions')
+    .select('*')
+    .order('created_at', { ascending: false });
 
-const STEPS = [
-  'Fetching page content…',
-  'Extracting keywords with Groq…',
-  'Searching indexed pages in Supabase…',
-  'Confirming suggestions with Groq…',
-];
-
-export default function Home() {
-  const [url, setUrl] = useState('');
-  const [loading, setLoading] = useState(false);
-  const [stepIndex, setStepIndex] = useState(0);
-  const [result, setResult] = useState(null);
-  const [error, setError] = useState('');
-
-  async function handleAnalyze(e) {
-    e.preventDefault();
-    if (!url.trim()) return;
-
-    setLoading(true);
-    setError('');
-    setResult(null);
-    setStepIndex(0);
-
-    // Cycle through step labels every ~2 s while waiting
-    const interval = setInterval(() => {
-      setStepIndex((i) => Math.min(i + 1, STEPS.length - 1));
-    }, 2000);
-
-    try {
-      const res = await fetch('/api/analyze', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ url: url.trim() }),
-      });
-      const data = await res.json();
-      if (!res.ok) throw new Error(data.error || 'Unknown error');
-      setResult(data);
-    } catch (err) {
-      setError(err.message);
-    } finally {
-      clearInterval(interval);
-      setLoading(false);
-    }
+  if (error) {
+    console.error('[dashboard] Failed to fetch suggestions:', error.message);
+    return [];
   }
+
+  // Group by target_url, preserving the created_at order of first occurrence.
+  const map = new Map();
+  for (const row of data) {
+    if (!map.has(row.target_url)) {
+      map.set(row.target_url, {
+        targetUrl: row.target_url,
+        targetTitle: row.target_title,
+        suggestions: [],
+      });
+    }
+    map.get(row.target_url).suggestions.push(row);
+  }
+
+  return [...map.values()];
+}
+
+export default async function Home() {
+  const groups = await getSuggestionGroups();
+
+  const totalPending = groups.reduce(
+    (n, g) => n + g.suggestions.filter((s) => s.status === 'pending').length,
+    0,
+  );
 
   return (
     <main className="container">
       <h1>BackLinker</h1>
       <p className="subtitle">
-        Paste the URL of a newly published blog post to find the best internal linking opportunities.
+        Paste a newly published post URL to find internal linking opportunities across your site.
       </p>
 
-      <form className="input-row" onSubmit={handleAnalyze}>
-        <input
-          type="url"
-          placeholder="https://yourblog.com/new-post"
-          value={url}
-          onChange={(e) => setUrl(e.target.value)}
-          required
-          disabled={loading}
-        />
-        <button type="submit" disabled={loading || !url.trim()}>
-          {loading ? 'Analysing…' : 'Find Backlinks'}
-        </button>
-      </form>
+      <AnalyzeForm />
 
-      {error && <div className="error-banner">{error}</div>}
-
-      {loading && (
-        <div className="loader">
-          <div className="spinner" />
-          <span className="step-label">{STEPS[stepIndex]}</span>
+      <div className="dashboard-section">
+        <div className="dashboard-header">
+          <span className="dashboard-title">Saved Suggestions</span>
+          {totalPending > 0 && (
+            <span className="pending-badge">{totalPending} pending</span>
+          )}
         </div>
-      )}
 
-      {result && !loading && (
-        <>
-          {/* Keywords */}
-          <div className="keywords-section">
-            <h2>Detected Keywords — {result.newPostTitle}</h2>
-            <span className="keyword-primary">{result.primary}</span>
-            {result.variations?.map((v) => (
-              <span key={v} className="keyword-variation">
-                {v}
-              </span>
-            ))}
-          </div>
-
-          {/* Suggestions */}
-          <div className="suggestions-header">
-            {result.suggestions?.length > 0
-              ? `${result.suggestions.length} Backlink Suggestion${result.suggestions.length !== 1 ? 's' : ''}`
-              : 'Backlink Suggestions'}
-          </div>
-
-          {result.message && !result.suggestions?.length && (
-            <div className="no-suggestions">{result.message}</div>
-          )}
-
-          {result.suggestions?.length === 0 && !result.message && (
-            <div className="no-suggestions">
-              No strong backlink opportunities found in the current index.
-            </div>
-          )}
-
-          {result.suggestions?.map((s, i) => (
-            <div key={i} className="suggestion-card">
-              <div className="source-title">{s.sourceTitle}</div>
-              <div className="source-url">
-                <a href={s.sourceUrl} target="_blank" rel="noopener noreferrer">
-                  {s.sourceUrl}
-                </a>
-              </div>
-              <div className="anchor-label">
-                Suggested anchor text
-                {s.anchorSource === 'variation' && (
-                  <span className="anchor-badge">variation</span>
-                )}
-              </div>
-              <div className="anchor-text">"{s.suggestedAnchorText}"</div>
-              <div className="context-sentence">{s.context}</div>
-              <div className="reason">{s.reason}</div>
-            </div>
-          ))}
-        </>
-      )}
+        <SuggestionsList groups={groups} />
+      </div>
     </main>
   );
 }

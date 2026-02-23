@@ -1,6 +1,7 @@
 import { NextResponse } from 'next/server';
 import { supabase } from '@/lib/supabase';
 import { generatePageMetadata } from '@/lib/groq';
+import { analyzeUrl, saveSuggestions } from '@/lib/analyze';
 
 // Total pages to process per cron run across both backfill and new URLs.
 // Backfills are prioritised first; any remaining slots go to new URLs.
@@ -136,6 +137,15 @@ export async function GET(request) {
 
         stats.newInserted++;
         log.push(`    Inserted: "${title}"`);
+
+        // Run backlink analysis for the newly indexed page and persist suggestions.
+        try {
+          const analysis = await analyzeUrl(url);
+          await saveSuggestions(url, title, analysis.suggestions);
+          log.push(`    Saved ${analysis.suggestions.length} backlink suggestion(s).`);
+        } catch (analysisErr) {
+          log.push(`    Analysis skipped: ${analysisErr.message}`);
+        }
       } catch (err) {
         stats.errors++;
         log.push(`    ERROR: ${err.message}`);
