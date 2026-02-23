@@ -1,66 +1,128 @@
-import Image from "next/image";
-import styles from "./page.module.css";
+'use client';
+
+import { useState } from 'react';
+
+const STEPS = [
+  'Fetching page content…',
+  'Extracting keywords with Groq…',
+  'Searching indexed pages in Supabase…',
+  'Confirming suggestions with Groq…',
+];
 
 export default function Home() {
+  const [url, setUrl] = useState('');
+  const [loading, setLoading] = useState(false);
+  const [stepIndex, setStepIndex] = useState(0);
+  const [result, setResult] = useState(null);
+  const [error, setError] = useState('');
+
+  async function handleAnalyze(e) {
+    e.preventDefault();
+    if (!url.trim()) return;
+
+    setLoading(true);
+    setError('');
+    setResult(null);
+    setStepIndex(0);
+
+    // Cycle through step labels every ~2 s while waiting
+    const interval = setInterval(() => {
+      setStepIndex((i) => Math.min(i + 1, STEPS.length - 1));
+    }, 2000);
+
+    try {
+      const res = await fetch('/api/analyze', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ url: url.trim() }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || 'Unknown error');
+      setResult(data);
+    } catch (err) {
+      setError(err.message);
+    } finally {
+      clearInterval(interval);
+      setLoading(false);
+    }
+  }
+
   return (
-    <div className={styles.page}>
-      <main className={styles.main}>
-        <Image
-          className={styles.logo}
-          src="/next.svg"
-          alt="Next.js logo"
-          width={100}
-          height={20}
-          priority
+    <main className="container">
+      <h1>BackLinker</h1>
+      <p className="subtitle">
+        Paste the URL of a newly published blog post to find the best internal linking opportunities.
+      </p>
+
+      <form className="input-row" onSubmit={handleAnalyze}>
+        <input
+          type="url"
+          placeholder="https://yourblog.com/new-post"
+          value={url}
+          onChange={(e) => setUrl(e.target.value)}
+          required
+          disabled={loading}
         />
-        <div className={styles.intro}>
-          <h1>To get started, edit the page.js file.</h1>
-          <p>
-            Looking for a starting point or more instructions? Head over to{" "}
-            <a
-              href="https://vercel.com/templates?framework=next.js&utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-              target="_blank"
-              rel="noopener noreferrer"
-            >
-              Templates
-            </a>{" "}
-            or the{" "}
-            <a
-              href="https://nextjs.org/learn?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-              target="_blank"
-              rel="noopener noreferrer"
-            >
-              Learning
-            </a>{" "}
-            center.
-          </p>
+        <button type="submit" disabled={loading || !url.trim()}>
+          {loading ? 'Analysing…' : 'Find Backlinks'}
+        </button>
+      </form>
+
+      {error && <div className="error-banner">{error}</div>}
+
+      {loading && (
+        <div className="loader">
+          <div className="spinner" />
+          <span className="step-label">{STEPS[stepIndex]}</span>
         </div>
-        <div className={styles.ctas}>
-          <a
-            className={styles.primary}
-            href="https://vercel.com/new?utm_source=create-next-app&utm_medium=appdir-template&utm_campaign=create-next-app"
-            target="_blank"
-            rel="noopener noreferrer"
-          >
-            <Image
-              className={styles.logo}
-              src="/vercel.svg"
-              alt="Vercel logomark"
-              width={16}
-              height={16}
-            />
-            Deploy Now
-          </a>
-          <a
-            className={styles.secondary}
-            href="https://nextjs.org/docs?utm_source=create-next-app&utm_medium=appdir-template&utm_campaign=create-next-app"
-            target="_blank"
-            rel="noopener noreferrer"
-          >
-            Documentation
-          </a>
-        </div>
-      </main>
-    </div>
+      )}
+
+      {result && !loading && (
+        <>
+          {/* Keywords */}
+          <div className="keywords-section">
+            <h2>Detected Keywords — {result.newPostTitle}</h2>
+            <span className="keyword-primary">{result.primary}</span>
+            {result.variations?.map((v) => (
+              <span key={v} className="keyword-variation">
+                {v}
+              </span>
+            ))}
+          </div>
+
+          {/* Suggestions */}
+          <div className="suggestions-header">
+            {result.suggestions?.length > 0
+              ? `${result.suggestions.length} Backlink Suggestion${result.suggestions.length !== 1 ? 's' : ''}`
+              : 'Backlink Suggestions'}
+          </div>
+
+          {result.message && !result.suggestions?.length && (
+            <div className="no-suggestions">{result.message}</div>
+          )}
+
+          {result.suggestions?.length === 0 && !result.message && (
+            <div className="no-suggestions">
+              No strong backlink opportunities found in the current index.
+            </div>
+          )}
+
+          {result.suggestions?.map((s, i) => (
+            <div key={i} className="suggestion-card">
+              <div className="source-title">{s.sourceTitle}</div>
+              <div className="source-url">
+                <a href={s.sourceUrl} target="_blank" rel="noopener noreferrer">
+                  {s.sourceUrl}
+                </a>
+              </div>
+              <div className="anchor-label">Suggested anchor text</div>
+              <div className="anchor-text">"{s.suggestedAnchorText}"</div>
+              <div className="context-sentence">{s.context}</div>
+              <div className="reason">{s.reason}</div>
+            </div>
+          ))}
+        </>
+      )}
+    </main>
   );
 }
