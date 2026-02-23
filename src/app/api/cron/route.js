@@ -1,3 +1,5 @@
+export const maxDuration = 60;
+
 import { NextResponse } from 'next/server';
 import { getSupabase } from '@/lib/supabase';
 import { generatePageMetadata } from '@/lib/groq';
