@@ -1,3 +1,5 @@
+export const revalidate = 0;
+
 import { getSupabase } from '@/lib/supabase';
 import AnalyzeForm from './AnalyzeForm';
 import SuggestionsList from './SuggestionsList';
