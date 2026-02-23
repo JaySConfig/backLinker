@@ -19,18 +19,25 @@ async function fetchPageContent(url) {
   const titleMatch = html.match(/<title[^>]*>([^<]*)<\/title>/i);
   const title = titleMatch ? titleMatch[1].trim() : url;
 
-  // Collect every href on the page and resolve relative paths to absolute URLs.
-  // Both /page and https://example.com/page forms are handled.
+  // Collect every href on the page, resolve relative paths, and normalise.
+  // The regex captures the full raw value (including any query string / fragment);
+  // we then use the URL constructor to parse it properly and take only
+  // origin + pathname so that ?utm_source= style suffixes don't cause mismatches.
+  const rawHrefValues = [...html.matchAll(/href=["']([^"'\s]+)["']/gi)].map((m) => m[1]);
+
   const existingHrefs = new Set(
-    [...html.matchAll(/href=["']([^"'#?\s]+)["']/gi)]
-      .flatMap(([, href]) => {
-        try {
-          return [normalizeUrl(new URL(href, url).href)];
-        } catch {
-          return [];
-        }
-      }),
+    rawHrefValues.flatMap((href) => {
+      try {
+        const parsed = new URL(href, url);
+        return [normalizeUrl(parsed.origin + parsed.pathname)];
+      } catch {
+        return [];
+      }
+    }),
   );
+
+  console.log(`[analyze] ${existingHrefs.size} unique hrefs extracted from <${url}>`);
+  console.log('[analyze] Sample extracted hrefs:', [...existingHrefs].slice(0, 15));
 
   // Strip scripts, styles, nav, header, footer to reduce noise
   const stripped = html
@@ -46,9 +53,17 @@ async function fetchPageContent(url) {
   return { title, content: stripped.slice(0, 15000), existingHrefs };
 }
 
-/** Strips trailing slash and lowercases for reliable URL comparison. */
+/**
+ * Canonicalises a URL string for reliable equality checks.
+ * Normalises: scheme (http→https), www prefix, trailing slash, and casing.
+ * Query strings and fragments are intentionally excluded by the caller.
+ */
 function normalizeUrl(u) {
-  return u.toLowerCase().replace(/\/$/, '');
+  return u
+    .toLowerCase()
+    .replace(/^http:\/\//, 'https://')          // http → https
+    .replace(/^https:\/\/www\./, 'https://')    // strip www subdomain
+    .replace(/\/$/, '');                         // strip trailing slash
 }
 
 /**
@@ -143,9 +158,14 @@ export async function POST(request) {
     const confirmed = await confirmSuggestions(newPostTitle, newPostSummary, cappedCandidates);
 
     // --- Step 5: Remove suggestions where the source page is already linked ---
-    const suggestions = confirmed.filter(
-      (s) => !existingHrefs.has(normalizeUrl(s.sourceUrl)),
-    );
+    console.log('[analyze] Checking confirmed suggestions against existing hrefs:');
+    const suggestions = confirmed.filter((s) => {
+      const normalised = normalizeUrl(s.sourceUrl);
+      const alreadyLinked = existingHrefs.has(normalised);
+      console.log(`  ${alreadyLinked ? '✗ REMOVED' : '✓ kept  '} ${normalised}`);
+      return !alreadyLinked;
+    });
+    console.log(`[analyze] Filter result: ${confirmed.length} confirmed → ${suggestions.length} kept, ${confirmed.length - suggestions.length} removed.`);
 
     return NextResponse.json({
       newPostTitle,
