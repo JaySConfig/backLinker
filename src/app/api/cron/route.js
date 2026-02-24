@@ -3,14 +3,20 @@ export const maxDuration = 60;
 import { NextResponse } from 'next/server';
 import { getSupabase } from '@/lib/supabase';
 import { generatePageMetadata } from '@/lib/groq';
-import { analyzeUrl, saveSuggestions, processLinkChecks } from '@/lib/analyze';
+import {
+  analyzeUrl,
+  saveSuggestions,
+  populateSentences,
+  processLinkChecks,
+  isContentPage,
+} from '@/lib/analyze';
 
-// Total pages to process per cron run across both backfill and new URLs.
-// Backfills are prioritised first; any remaining slots go to new URLs.
-// Keeping this low (3) stays comfortably within Groq's free-tier rate limits.
-const MAX_PER_RUN = 3;
+// Pages to scrape/backfill per run (shared budget for indexing + backfill).
+const MAX_INDEXING_PER_RUN = 2;
+// Pages to run backlink analysis on per run.
+const MAX_ANALYSIS_PER_RUN = 2;
 
-// Polite delay between HTTP scrapes (ms)
+// Polite delay between HTTP scrapes (ms).
 const SCRAPE_DELAY_MS = 1500;
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
@@ -19,10 +25,6 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 // Sitemap helpers
 // ---------------------------------------------------------------------------
 
-/**
- * Extracts all <loc> values from a sitemap or sitemap-index XML string.
- * Handles both standard sitemaps and sitemap index files transparently.
- */
 async function fetchSitemapUrls(sitemapUrl) {
   const res = await fetch(sitemapUrl, {
     headers: { 'User-Agent': 'Mozilla/5.0 (compatible; BacklinkerBot/1.0)' },
@@ -30,7 +32,6 @@ async function fetchSitemapUrls(sitemapUrl) {
   if (!res.ok) throw new Error(`Sitemap fetch failed: ${res.status} ${res.statusText}`);
   const xml = await res.text();
 
-  // Sitemap index — contains <sitemap><loc>…</loc></sitemap> entries pointing to child sitemaps
   if (xml.includes('<sitemapindex')) {
     const childUrls = [...xml.matchAll(/<sitemap>[\s\S]*?<loc>(.*?)<\/loc>[\s\S]*?<\/sitemap>/gi)].map(
       (m) => m[1].trim(),
@@ -39,7 +40,6 @@ async function fetchSitemapUrls(sitemapUrl) {
     return nested.flat();
   }
 
-  // Standard sitemap — contains <url><loc>…</loc></url> entries
   return [...xml.matchAll(/<url>[\s\S]*?<loc>(.*?)<\/loc>[\s\S]*?<\/url>/gi)].map((m) =>
     m[1].trim(),
   );
@@ -49,12 +49,9 @@ async function fetchSitemapUrls(sitemapUrl) {
 // Page scraper
 // ---------------------------------------------------------------------------
 
-/**
- * Fetches a URL and returns { title, content } as clean plain text.
- */
 async function scrapePage(url) {
   const res = await fetch(url, {
-    headers: { 'User-Agent': 'BackLinker-Cron/1.0 (internal tool)' },
+    headers: { 'User-Agent': 'Mozilla/5.0 (compatible; BacklinkerBot/1.0)' },
     signal: AbortSignal.timeout(15000),
   });
   if (!res.ok) throw new Error(`HTTP ${res.status}`);
@@ -79,10 +76,9 @@ async function scrapePage(url) {
 
 // ---------------------------------------------------------------------------
 // GET /api/cron
-// Vercel calls this on schedule; it also sends Authorization: Bearer <CRON_SECRET>
 // ---------------------------------------------------------------------------
+
 export async function GET(request) {
-  // Auth guard — skip in local dev where CRON_SECRET may not be set
   const cronSecret = process.env.CRON_SECRET;
   if (cronSecret) {
     const authHeader = request.headers.get('authorization');
@@ -96,8 +92,8 @@ export async function GET(request) {
     return NextResponse.json({ error: 'SITEMAP_URL environment variable is not set.' }, { status: 500 });
   }
 
-  const log = []; // collects a human-readable run summary
-  const stats = { newInserted: 0, backfilled: 0, errors: 0 };
+  const log = [];
+  const stats = { newInserted: 0, backfilled: 0, analyzed: 0, errors: 0 };
 
   try {
     // ----- 1. Fetch all URLs from the sitemap --------------------------------
@@ -105,7 +101,7 @@ export async function GET(request) {
     const sitemapUrls = await fetchSitemapUrls(sitemapUrl);
     log.push(`Sitemap contains ${sitemapUrls.length} URL(s).`);
 
-    // ----- 2. Load all existing URLs from Supabase ---------------------------
+    // ----- 2. Load all existing pages from Supabase --------------------------
     const { data: existingRows, error: fetchErr } = await getSupabase()
       .from('pages')
       .select('url, content');
@@ -113,23 +109,21 @@ export async function GET(request) {
 
     const existingUrlSet = new Set(existingRows.map((r) => r.url));
 
-    // Backfills fill the budget first; remaining slots go to new URLs.
+    // Backfills fill the indexing budget first; remaining slots go to new URLs.
     const nullContentUrls = existingRows
       .filter((r) => !r.content)
       .map((r) => r.url)
-      .slice(0, MAX_PER_RUN);
+      .slice(0, MAX_INDEXING_PER_RUN);
 
-    // ----- 3. Determine which URLs are brand new -----------------------------
-    const SKIP_PATTERNS = ['/category/', '/author/', '/tag/', '/page/', '/contributors/'];
-    const isContentPage = (u) => !SKIP_PATTERNS.some((p) => u.includes(p));
-
-    const remainingSlots = MAX_PER_RUN - nullContentUrls.length;
+    // ----- 3. Determine which URLs are new -----------------------------------
+    const remainingSlots = MAX_INDEXING_PER_RUN - nullContentUrls.length;
     const newUrls = sitemapUrls
       .filter((u) => !existingUrlSet.has(u) && isContentPage(u))
       .slice(0, remainingSlots);
-    log.push(`Backfill queue: ${nullContentUrls.length}, new URLs: ${newUrls.length} (budget: ${MAX_PER_RUN}/run).`);
 
-    // ----- 4. Scrape and insert new pages ------------------------------------
+    log.push(`Backfill queue: ${nullContentUrls.length}, new URLs: ${newUrls.length} (budget: ${MAX_INDEXING_PER_RUN}/run).`);
+
+    // ----- 4. Scrape and insert new pages + populate sentences ---------------
     for (const url of newUrls) {
       try {
         log.push(`  [NEW] Scraping ${url}`);
@@ -145,14 +139,8 @@ export async function GET(request) {
         stats.newInserted++;
         log.push(`    Inserted: "${title}"`);
 
-        // Run backlink analysis for the newly indexed page and persist suggestions.
-        try {
-          const analysis = await analyzeUrl(url);
-          await saveSuggestions(url, title, analysis.suggestions);
-          log.push(`    Saved ${analysis.suggestions.length} backlink suggestion(s).`);
-        } catch (analysisErr) {
-          log.push(`    Analysis skipped: ${analysisErr.message}`);
-        }
+        await populateSentences(url, title, content);
+        log.push(`    Sentences populated.`);
       } catch (err) {
         stats.errors++;
         log.push(`    ERROR: ${err.message}`);
@@ -166,7 +154,6 @@ export async function GET(request) {
         log.push(`  [BACKFILL] Scraping ${url}`);
         const { title, content } = await scrapePage(url);
 
-        // Only call Groq if we also need to generate summary/keywords
         const { data: existingMeta } = await getSupabase()
           .from('pages')
           .select('summary, keywords')
@@ -186,13 +173,56 @@ export async function GET(request) {
 
         stats.backfilled++;
         log.push(`    Backfilled${needsMeta ? ' (+ metadata)' : ''}: ${url}`);
+
+        await populateSentences(url, title, content);
+        log.push(`    Sentences populated.`);
       } catch (err) {
         stats.errors++;
         log.push(`    ERROR: ${err.message}`);
       }
       await sleep(SCRAPE_DELAY_MS);
     }
-    // ----- 6. Process deferred link checks on pending suggestions -----------
+
+    // ----- 6. Auto-analyze pages that haven't been analyzed yet --------------
+    // Only analyze real content pages; skip category/author/etc. pages.
+    const { data: unanalyzed, error: analyzeErr } = await getSupabase()
+      .from('pages')
+      .select('url, title, content')
+      .is('analyzed_at', null)
+      .not('content', 'is', null)
+      .order('created_at', { ascending: false })
+      .limit(MAX_ANALYSIS_PER_RUN * 4); // fetch extra so we can filter skip patterns
+
+    if (analyzeErr) {
+      log.push(`  Auto-analyze skipped: ${analyzeErr.message}`);
+    } else {
+      const toAnalyze = (unanalyzed || [])
+        .filter((p) => isContentPage(p.url))
+        .slice(0, MAX_ANALYSIS_PER_RUN);
+
+      log.push(`  Auto-analyze: ${toAnalyze.length} page(s) queued.`);
+
+      for (const page of toAnalyze) {
+        try {
+          log.push(`  [ANALYZE] ${page.url}`);
+          const analysis = await analyzeUrl(page.url, { title: page.title, content: page.content });
+          await saveSuggestions(page.url, page.title, analysis.suggestions);
+
+          await getSupabase()
+            .from('pages')
+            .update({ analyzed_at: new Date().toISOString() })
+            .eq('url', page.url);
+
+          stats.analyzed++;
+          log.push(`    Saved ${analysis.suggestions.length} suggestion(s).`);
+        } catch (err) {
+          stats.errors++;
+          log.push(`    ERROR: ${err.message}`);
+        }
+      }
+    }
+
+    // ----- 7. Process deferred link checks on pending suggestions ------------
     try {
       const linkCheck = await processLinkChecks(3);
       log.push(`Link check: ${linkCheck.processed} checked, ${linkCheck.filtered} filtered.`);

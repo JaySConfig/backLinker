@@ -1,5 +1,5 @@
 import { getSupabase } from './supabase';
-import { extractKeywords, confirmSuggestions } from './groq';
+import { extractKeywordsExpanded, confirmSuggestions } from './groq';
 
 // ---------------------------------------------------------------------------
 // URL helpers
@@ -27,6 +27,10 @@ export function normalizeUrl(u) {
       .replace(/\/$/, '');
   }
 }
+
+// URLs matching these patterns are never used as backlink sources.
+const SKIP_SOURCE_PATTERNS = ['/sitemap', '/category/', '/author/', '/tag/', '/blog/', '/page/'];
+export const isContentPage = (url) => !SKIP_SOURCE_PATTERNS.some((p) => url.includes(p));
 
 // ---------------------------------------------------------------------------
 // Page fetching
@@ -85,11 +89,32 @@ export async function fetchSourceHrefs(sourceUrl) {
   );
 }
 
+// ---------------------------------------------------------------------------
+// Sentence helpers
+// ---------------------------------------------------------------------------
+
 function splitSentences(text) {
   return text
     .split(/(?<=[.!?])\s+/)
     .map((s) => s.trim())
-    .filter((s) => s.length > 30);
+    .filter((s) => s.length > 40 && s.split(' ').length >= 7);
+}
+
+/**
+ * Splits a page's content into sentences and stores them in the sentences
+ * table. Deletes existing rows for the page first so re-indexing is safe.
+ */
+export async function populateSentences(pageUrl, pageTitle, content) {
+  if (!content) return;
+  const sentences = splitSentences(content);
+  if (!sentences.length) return;
+
+  // Replace any existing sentences for this page.
+  await getSupabase().from('sentences').delete().eq('page_url', pageUrl);
+
+  const rows = sentences.map((sentence) => ({ page_url: pageUrl, page_title: pageTitle, sentence }));
+  const { error } = await getSupabase().from('sentences').insert(rows);
+  if (error) console.error(`[populateSentences] Insert failed for ${pageUrl}:`, error.message);
 }
 
 // ---------------------------------------------------------------------------
@@ -97,42 +122,52 @@ function splitSentences(text) {
 // ---------------------------------------------------------------------------
 
 /**
- * Runs the keyword extraction and candidate-finding pipeline for a URL.
- * Saves all Groq-confirmed suggestions immediately as pending WITHOUT
- * checking whether the source page already links to the target — that
- * slower per-page check is deferred to processLinkChecks().
+ * Runs the full backlink analysis pipeline for a URL.
  *
- * Returns: { newPostTitle, primary, variations, suggestions }
+ * If preloaded is provided ({ title, content }), the page is not re-fetched —
+ * useful when the cron already has the content in memory.
+ *
+ * Returns: { newPostTitle, keywords, suggestions }
+ *   suggestions: Array of { sourceUrl, sourceTitle, suggestedAnchorText,
+ *                           anchorSource, context, reason }
  */
-export async function analyzeUrl(url) {
-  const { title: newPostTitle, content: newPostContent } = await fetchPageContent(url);
+export async function analyzeUrl(url, preloaded = null) {
+  const { title: newPostTitle, content: newPostContent } = preloaded ?? await fetchPageContent(url);
 
-  const { primary, variations } = await extractKeywords(newPostContent);
-  const allKeywords = [primary, ...variations].map((k) => k.toLowerCase());
+  // Extract a broad set of keywords to search the sentences table with.
+  const keywords = await extractKeywordsExpanded(newPostContent);
 
-  const ilikeFilters = allKeywords.map((kw) => `content.ilike.%${kw}%`).join(',');
+  const ilikeFilters = keywords.map((kw) => `sentence.ilike.%${kw}%`).join(',');
 
-  const { data: matchingPages, error: dbError } = await getSupabase()
-    .from('pages')
-    .select('url, title, summary, content')
+  const { data: matchingSentences, error: dbError } = await getSupabase()
+    .from('sentences')
+    .select('page_url, page_title, sentence')
     .or(ilikeFilters)
-    .neq('url', url)
-    .limit(20);
+    .neq('page_url', url)
+    .limit(40);
 
   if (dbError) throw new Error(`Supabase query failed: ${dbError.message}`);
 
-  if (!matchingPages || matchingPages.length === 0) {
-    return { newPostTitle, primary, variations, suggestions: [] };
+  if (!matchingSentences || matchingSentences.length === 0) {
+    return { newPostTitle, keywords, suggestions: [] };
   }
 
+  // Deduplicate by sentence text and filter out non-content pages.
+  const seen = new Set();
   const candidates = [];
-  for (const page of matchingPages) {
-    if (!page.content) continue;
-    for (const sentence of splitSentences(page.content)) {
-      if (allKeywords.some((kw) => sentence.toLowerCase().includes(kw))) {
-        candidates.push({ sourceUrl: page.url, sourceTitle: page.title || page.url, sentence });
-      }
-    }
+  for (const s of matchingSentences) {
+    if (!isContentPage(s.page_url)) continue;
+    if (seen.has(s.sentence)) continue;
+    seen.add(s.sentence);
+    candidates.push({
+      sourceUrl: s.page_url,
+      sourceTitle: s.page_title || s.page_url,
+      sentence: s.sentence,
+    });
+  }
+
+  if (!candidates.length) {
+    return { newPostTitle, keywords, suggestions: [] };
   }
 
   const suggestions = await confirmSuggestions(
@@ -141,7 +176,7 @@ export async function analyzeUrl(url) {
     candidates.slice(0, 15),
   );
 
-  return { newPostTitle, primary, variations, suggestions };
+  return { newPostTitle, keywords, suggestions };
 }
 
 // ---------------------------------------------------------------------------
@@ -218,7 +253,7 @@ export async function processLinkChecks(batchSize = 3) {
         console.log(`  ✓ kept: ${s.source_url}`);
       }
     } catch (err) {
-      // Source page unreachable — mark checked so we don't retry indefinitely
+      // Source page unreachable — mark checked so we don't retry indefinitely.
       await getSupabase().from('suggestions').update({ link_checked: true }).eq('id', s.id);
       console.log(`  ? kept (fetch failed): ${s.source_url} — ${err.message}`);
     }

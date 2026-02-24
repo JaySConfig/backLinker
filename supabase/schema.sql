@@ -1,14 +1,18 @@
 -- Run this in your Supabase SQL editor to set up the pages table.
 
 create table if not exists pages (
-  id          bigserial primary key,
-  url         text not null unique,
-  title       text,
-  summary     text,
-  keywords    text[],          -- array of keyword strings
-  content     text,            -- full plain-text content of the page
-  created_at  timestamptz default now()
+  id           bigserial primary key,
+  url          text not null unique,
+  title        text,
+  summary      text,
+  keywords     text[],          -- array of keyword strings
+  content      text,            -- full plain-text content of the page
+  analyzed_at  timestamptz,     -- set after backlink analysis has run for this page
+  created_at   timestamptz default now()
 );
+
+-- If the table already exists, add the column without recreating it:
+alter table pages add column if not exists analyzed_at timestamptz;
 
 -- Optional: full-text search index on content + title for faster keyword matching.
 create index if not exists pages_content_fts
@@ -46,3 +50,28 @@ create table if not exists suggestions (
 
 -- If the table already exists, add the column without recreating it:
 alter table suggestions add column if not exists link_checked boolean not null default false;
+
+-- ---------------------------------------------------------------------------
+-- Sentences table — one row per sentence from each indexed page.
+-- Queried with ilike to find candidate backlink placements without loading
+-- full page content. Populated by the cron indexer and buildSentences.js.
+-- ---------------------------------------------------------------------------
+
+-- Trigram extension required for fast ilike searches on sentence text.
+create extension if not exists pg_trgm;
+
+create table if not exists sentences (
+  id          bigserial primary key,
+  page_url    text not null,
+  page_title  text,
+  sentence    text not null,
+  created_at  timestamptz default now()
+);
+
+-- Trigram index for fast ilike keyword searches across sentence text.
+create index if not exists sentences_sentence_trgm
+  on sentences using gin(sentence gin_trgm_ops);
+
+-- Index for fast delete/replace when re-indexing a page.
+create index if not exists sentences_page_url_idx
+  on sentences (page_url);

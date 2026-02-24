@@ -44,6 +44,45 @@ ${content.slice(0, 8000)}
 }
 
 /**
+ * Extracts 25-30 keywords, phrases, and related terms from a blog post.
+ * Used by analyzeUrl to search the sentences table for candidate backlinks.
+ *
+ * Returns: string[]
+ */
+export async function extractKeywordsExpanded(pageContent) {
+  const response = await groq.chat.completions.create({
+    model: 'llama-3.3-70b-versatile',
+    temperature: 0.3,
+    messages: [
+      {
+        role: 'system',
+        content:
+          'You are an SEO expert. Respond only with valid JSON — no markdown fences, no explanation.',
+      },
+      {
+        role: 'user',
+        content: `Analyse the blog post below and return a JSON object with one key:
+- "keywords": an array of 25-30 keywords, phrases, synonyms, and related terms that represent the topics covered. Include both broad terms and specific phrases someone writing about related topics might naturally use in a sentence.
+
+Blog post content:
+---
+${pageContent.slice(0, 3000)}
+---`,
+      },
+    ],
+  });
+
+  const raw = response.choices[0].message.content.trim();
+  try {
+    return JSON.parse(raw).keywords;
+  } catch {
+    const match = raw.match(/\{[\s\S]*\}/);
+    if (match) return JSON.parse(match[0]).keywords;
+    throw new Error(`Failed to parse keywords JSON from Groq: ${raw}`);
+  }
+}
+
+/**
  * Given the plain-text content of a blog post, asks Groq to extract the
  * primary keyword and 5 natural variations.
  *
