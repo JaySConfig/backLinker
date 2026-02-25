@@ -191,7 +191,16 @@ export async function analyzeUrl(url, preloaded = null) {
 export async function saveSuggestions(targetUrl, targetTitle, suggestions) {
   if (!suggestions.length) return;
 
-  const rows = suggestions.map((s) => ({
+  // Deduplicate by source_url — the upsert constraint is (target_url, source_url)
+  // and Postgres will error if the same pair appears twice in one batch.
+  const seenSources = new Set();
+  const unique = suggestions.filter((s) => {
+    if (seenSources.has(s.sourceUrl)) return false;
+    seenSources.add(s.sourceUrl);
+    return true;
+  });
+
+  const rows = unique.map((s) => ({
     target_url: targetUrl,
     target_title: targetTitle,
     source_url: s.sourceUrl,
