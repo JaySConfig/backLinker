@@ -14,7 +14,7 @@ import {
 // Pages to scrape/backfill per run (shared budget for indexing + backfill).
 const MAX_INDEXING_PER_RUN = 2;
 // Pages to run backlink analysis on per run.
-const MAX_ANALYSIS_PER_RUN = 10;
+const MAX_ANALYSIS_PER_RUN = 5;
 
 // Polite delay between HTTP scrapes (ms).
 const SCRAPE_DELAY_MS = 1500;
