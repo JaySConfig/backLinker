@@ -215,10 +215,16 @@ export async function GET(request) {
           const analysis = await analyzeUrl(page.url, { title: page.title, content: page.content });
           await saveSuggestions(page.url, page.title, analysis.suggestions);
 
-          await getSupabase()
+          const { error: markErr } = await getSupabase()
             .from('pages')
             .update({ analyzed_at: new Date().toISOString() })
             .eq('url', page.url);
+
+          if (markErr) {
+            log.push(`    WARNING: analyzed_at update failed for ${page.url}: ${markErr.message}`);
+          } else {
+            log.push(`    Marked analyzed: ${page.url}`);
+          }
 
           stats.analyzed++;
           log.push(`    Saved ${analysis.suggestions.length} suggestion(s).`);
