@@ -184,23 +184,30 @@ export async function GET(request) {
     }
 
     // ----- 6. Auto-analyze pages that haven't been analyzed yet --------------
-    // Only analyze real content pages; skip category/author/etc. pages.
+    // Fetch a large pool so the JS skip-pattern filter has enough to work with.
     const { data: unanalyzed, error: analyzeErr } = await getSupabase()
       .from('pages')
       .select('url, title, content')
       .is('analyzed_at', null)
       .not('content', 'is', null)
       .order('created_at', { ascending: false })
-      .limit(MAX_ANALYSIS_PER_RUN * 4); // fetch extra so we can filter skip patterns
+      .limit(100);
 
     if (analyzeErr) {
       log.push(`  Auto-analyze skipped: ${analyzeErr.message}`);
     } else {
+      log.push(`  Auto-analyze: query returned ${(unanalyzed || []).length} unanalyzed page(s) with content.`);
+
       const toAnalyze = (unanalyzed || [])
         .filter((p) => isContentPage(p.url))
         .slice(0, MAX_ANALYSIS_PER_RUN);
 
-      log.push(`  Auto-analyze: ${toAnalyze.length} page(s) queued.`);
+      log.push(`  After skip-pattern filter: ${toAnalyze.length} queued, ${(unanalyzed || []).filter(p => !isContentPage(p.url)).length} excluded by URL pattern.`);
+      if (toAnalyze.length > 0) {
+        log.push(`  First candidate: ${toAnalyze[0].url}`);
+      } else {
+        log.push(`  Sample unanalyzed URLs: ${(unanalyzed || []).slice(0, 5).map(p => p.url).join(', ')}`);
+      }
 
       for (const page of toAnalyze) {
         try {
