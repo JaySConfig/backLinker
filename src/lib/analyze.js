@@ -28,9 +28,25 @@ export function normalizeUrl(u) {
   }
 }
 
-// URLs matching these patterns are never used as backlink sources.
-const SKIP_SOURCE_PATTERNS = ['/sitemap', '/category/', '/author/', '/tag/', '/blog/', '/page/'];
-export const isContentPage = (url) => !SKIP_SOURCE_PATTERNS.some((p) => url.includes(p));
+// URLs matching these patterns are excluded from both source and target roles in suggestions.
+const SKIP_PATTERNS = [
+  '/sitemap',
+  '/category/',
+  '/author/',
+  '/tag/',
+  '/blog/',
+  '/page/',
+  '/contributors/',
+  '/privacy-policy',
+  '/terms-and-conditions',
+  '/newsletter-sign-up',
+  '/lipedema-quiz',
+  '/homeold',
+  '/advertise-with-us',
+  '/lipedema-photos',
+  '/lipedema-before-and-after',
+];
+export const isContentPage = (url) => !SKIP_PATTERNS.some((p) => url.includes(p));
 
 // ---------------------------------------------------------------------------
 // Page fetching
