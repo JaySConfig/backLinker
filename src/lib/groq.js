@@ -157,10 +157,14 @@ Summary: "${newPostSummary}"
 
 Below are candidate sentences from existing pages that might be good places to add an internal link back to the new post. For each candidate:
 1. Decide if it is genuinely a good backlink opportunity (contextually relevant, natural placement).
-2. If yes, choose anchor text using this priority order:
-   a. FIRST CHOICE — extract the most specific and descriptive phrase directly from the post title "${newPostTitle}". Prefer a sub-phrase over the full title if a shorter excerpt fits more naturally in the sentence.
+2. If yes, choose anchor text following these rules:
+   IMPORTANT — if the post title "${newPostTitle}" follows an "X vs Y" or "X and Y" pattern (e.g. "Lipedema vs Cellulite", "Diet and Exercise"), do NOT use the title or any title-like phrase as anchor text. Instead:
+   - Use just the secondary term (the Y part) if it fits naturally in the sentence, OR
+   - Use a descriptive prose phrase such as "the difference between X and Y" or "how X relates to Y".
+   For all other titles, choose anchor text in this priority order:
+   a. FIRST CHOICE — extract the most specific and descriptive phrase directly from the post title. Prefer a sub-phrase over the full title if a shorter excerpt fits more naturally.
    b. FALLBACK ONLY — if no phrase from the title can be woven in naturally, use a relevant keyword variation instead.
-   The anchor text must read naturally within the candidate sentence — never force it.
+   The anchor text must always read like natural prose within the candidate sentence — never like a page title or heading.
 3. If no, exclude it from the output.
 
 Return a JSON array where each item has:
