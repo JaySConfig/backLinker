@@ -221,6 +221,8 @@ export async function GET(request) {
         } catch (err) {
           stats.errors++;
           log.push(`    ERROR: ${err.message}`);
+          log.push(`    STACK: ${err.stack || '(no stack)'}`);
+          console.error('[/api/cron] Analysis error:', err);
         }
       }
     }
