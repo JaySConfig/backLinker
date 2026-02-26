@@ -186,21 +186,38 @@ export async function analyzeUrl(url, preloaded = null) {
   if (!matchingSentences?.length) return { newPostTitle, keywords, suggestions: [] };
 
   // Step 3: Filter non-content pages and pick one sentence per source page.
-  // Anchor text is derived from the longest keyword that appears in the sentence.
+  // Anchor text is derived from the longest multi-word keyword that appears in the sentence.
+  // Single-word and generic terms are excluded. Sentences with no valid anchor are skipped.
   // No page fetching here — link checking is deferred to processLinkChecks.
-  const lowerKeywords = keywords.map((kw) => kw.toLowerCase());
+  const GENERIC_TERMS = new Set([
+    'lipedema', 'lipoedema', 'condition', 'conditions', 'symptom', 'symptoms',
+    'women', 'woman', 'treatment', 'treatments', 'pain', 'legs', 'fat',
+    'health', 'body', 'disease', 'disorder', 'diagnosis',
+  ]);
+
+  const lowerKeywords = keywords
+    .map((kw) => kw.toLowerCase().trim())
+    .filter((kw) => {
+      const words = kw.split(/\s+/);
+      // Must be at least 2 words and not a single generic term
+      return words.length >= 2 && !GENERIC_TERMS.has(kw);
+    })
+    .sort((a, b) => b.length - a.length); // longest first for anchor text priority
+
   const seenSources = new Set();
   const suggestions = [];
 
   for (const s of matchingSentences) {
     if (!isContentPage(s.page_url)) continue;
     if (seenSources.has(s.page_url)) continue;
-    seenSources.add(s.page_url);
 
     const lowerSentence = s.sentence.toLowerCase();
-    const matchingKws = lowerKeywords.filter((kw) => lowerSentence.includes(kw));
-    const anchorText = matchingKws.sort((a, b) => b.length - a.length)[0] || null;
+    const anchorText = lowerKeywords.find((kw) => lowerSentence.includes(kw));
 
+    // Skip this sentence entirely if no valid multi-word anchor text found.
+    if (!anchorText) continue;
+
+    seenSources.add(s.page_url);
     suggestions.push({
       sourceUrl: s.page_url,
       sourceTitle: s.page_title || s.page_url,
