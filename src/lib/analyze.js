@@ -186,11 +186,32 @@ export async function analyzeUrl(url, preloaded = null) {
     return { newPostTitle, keywords, suggestions: [] };
   }
 
-  const suggestions = await confirmSuggestions(
+  const confirmed = await confirmSuggestions(
     newPostTitle,
     newPostContent.slice(0, 500),
     candidates.slice(0, 15),
   );
+
+  if (!confirmed.length) return { newPostTitle, keywords, suggestions: [] };
+
+  // Filter out any suggestion where the source page already links to the target.
+  // We fetch the full source page HTML and check every href — not just the sentence.
+  const targetNormalized = normalizeUrl(url);
+  const suggestions = [];
+  for (const s of confirmed) {
+    try {
+      const hrefs = await fetchSourceHrefs(s.sourceUrl);
+      if (hrefs.has(targetNormalized)) {
+        console.log(`[analyzeUrl] Filtered — source already links to target: ${s.sourceUrl}`);
+      } else {
+        suggestions.push(s);
+      }
+    } catch (err) {
+      // Source page unreachable; include the suggestion so it isn't silently lost.
+      console.log(`[analyzeUrl] Could not fetch ${s.sourceUrl} for link check (${err.message}) — keeping suggestion`);
+      suggestions.push(s);
+    }
+  }
 
   return { newPostTitle, keywords, suggestions };
 }
