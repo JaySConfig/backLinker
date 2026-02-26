@@ -1,5 +1,5 @@
 import { getSupabase } from './supabase';
-import { extractKeywordsExpanded, confirmSuggestions } from './groq';
+import { extractKeywordsExpanded } from './groq';
 
 // ---------------------------------------------------------------------------
 // URL helpers
@@ -150,9 +150,29 @@ export async function populateSentences(pageUrl, pageTitle, content) {
 export async function analyzeUrl(url, preloaded = null) {
   const { title: newPostTitle, content: newPostContent } = preloaded ?? await fetchPageContent(url);
 
-  // Extract a broad set of keywords to search the sentences table with.
-  const keywords = await extractKeywordsExpanded(newPostContent);
+  // Step 1: Get or generate keyword variations for this target page.
+  // Keywords are stored in the pages table so Groq is only called once per page ever.
+  let keywords;
+  const { data: pageRow } = await getSupabase()
+    .from('pages')
+    .select('keywords')
+    .eq('url', url)
+    .single();
 
+  if (pageRow?.keywords?.length >= 15) {
+    keywords = pageRow.keywords;
+    console.log(`[analyzeUrl] Using ${keywords.length} cached keywords for ${url}`);
+  } else {
+    keywords = await extractKeywordsExpanded(newPostContent);
+    const { error: kwErr } = await getSupabase()
+      .from('pages')
+      .update({ keywords })
+      .eq('url', url);
+    if (kwErr) console.error(`[analyzeUrl] Failed to cache keywords: ${kwErr.message}`);
+    console.log(`[analyzeUrl] Generated and cached ${keywords.length} keywords for ${url}`);
+  }
+
+  // Step 2: Search the sentences table for keyword matches across all other pages.
   const ilikeFilters = keywords.map((kw) => `sentence.ilike.%${kw}%`).join(',');
 
   const { data: matchingSentences, error: dbError } = await getSupabase()
@@ -160,57 +180,37 @@ export async function analyzeUrl(url, preloaded = null) {
     .select('page_url, page_title, sentence')
     .or(ilikeFilters)
     .neq('page_url', url)
-    .limit(40);
+    .limit(200);
 
   if (dbError) throw new Error(`Supabase query failed: ${dbError.message}`);
+  if (!matchingSentences?.length) return { newPostTitle, keywords, suggestions: [] };
 
-  if (!matchingSentences || matchingSentences.length === 0) {
-    return { newPostTitle, keywords, suggestions: [] };
-  }
+  // Step 3: Filter non-content pages and pick one sentence per source page.
+  // Anchor text is derived from the longest keyword that appears in the sentence.
+  // No page fetching here — link checking is deferred to processLinkChecks.
+  const lowerKeywords = keywords.map((kw) => kw.toLowerCase());
+  const seenSources = new Set();
+  const suggestions = [];
 
-  // Deduplicate by sentence text and filter out non-content pages.
-  const seen = new Set();
-  const candidates = [];
   for (const s of matchingSentences) {
     if (!isContentPage(s.page_url)) continue;
-    if (seen.has(s.sentence)) continue;
-    seen.add(s.sentence);
-    candidates.push({
+    if (seenSources.has(s.page_url)) continue;
+    seenSources.add(s.page_url);
+
+    const lowerSentence = s.sentence.toLowerCase();
+    const matchingKws = lowerKeywords.filter((kw) => lowerSentence.includes(kw));
+    const anchorText = matchingKws.sort((a, b) => b.length - a.length)[0] || null;
+
+    suggestions.push({
       sourceUrl: s.page_url,
       sourceTitle: s.page_title || s.page_url,
-      sentence: s.sentence,
+      suggestedAnchorText: anchorText,
+      anchorSource: 'keyword',
+      context: s.sentence,
+      reason: 'Keyword match in existing sentence.',
     });
-  }
 
-  if (!candidates.length) {
-    return { newPostTitle, keywords, suggestions: [] };
-  }
-
-  const confirmed = await confirmSuggestions(
-    newPostTitle,
-    newPostContent.slice(0, 500),
-    candidates.slice(0, 15),
-  );
-
-  if (!confirmed.length) return { newPostTitle, keywords, suggestions: [] };
-
-  // Filter out any suggestion where the source page already links to the target.
-  // We fetch the full source page HTML and check every href — not just the sentence.
-  const targetNormalized = normalizeUrl(url);
-  const suggestions = [];
-  for (const s of confirmed) {
-    try {
-      const hrefs = await fetchSourceHrefs(s.sourceUrl);
-      if (hrefs.has(targetNormalized)) {
-        console.log(`[analyzeUrl] Filtered — source already links to target: ${s.sourceUrl}`);
-      } else {
-        suggestions.push(s);
-      }
-    } catch (err) {
-      // Source page unreachable; include the suggestion so it isn't silently lost.
-      console.log(`[analyzeUrl] Could not fetch ${s.sourceUrl} for link check (${err.message}) — keeping suggestion`);
-      suggestions.push(s);
-    }
+    if (suggestions.length >= 30) break;
   }
 
   return { newPostTitle, keywords, suggestions };
