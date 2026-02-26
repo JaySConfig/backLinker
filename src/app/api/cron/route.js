@@ -182,18 +182,20 @@ export async function GET(request) {
     }
 
     // ----- 6. Analyze one unanalyzed page as the target ---------------------
-    // Fetch a small pool to account for pages excluded by skip-patterns.
-    const { data: unanalyzedPool, error: analyzeErr } = await getSupabase()
-      .from('pages')
-      .select('url, title, content')
-      .is('analyzed_at', null)
-      .not('content', 'is', null)
-      .order('created_at', { ascending: true })
-      .limit(20);
+    try {
+      // Fetch a small pool to account for pages excluded by skip-patterns.
+      const { data: unanalyzedPool, error: analyzeErr } = await getSupabase()
+        .from('pages')
+        .select('url, title, content')
+        .is('analyzed_at', null)
+        .not('content', 'is', null)
+        .order('created_at', { ascending: true })
+        .limit(20);
 
-    if (analyzeErr) {
-      log.push(`  Auto-analyze skipped: ${analyzeErr.message}`);
-    } else {
+      if (analyzeErr) {
+        throw new Error(`Supabase unanalyzed query failed: ${analyzeErr.message}`);
+      }
+
       // Pick the first content page from the pool.
       const target = (unanalyzedPool || []).find((p) => isContentPage(p.url));
 
@@ -201,30 +203,29 @@ export async function GET(request) {
         log.push(`  Auto-analyze: no unanalyzed content pages found.`);
       } else {
         log.push(`  [ANALYZE] ${target.url}`);
-        try {
-          const analysis = await analyzeUrl(target.url, { title: target.title, content: target.content });
-          await saveSuggestions(target.url, target.title, analysis.suggestions);
 
-          const { error: markErr } = await getSupabase()
-            .from('pages')
-            .update({ analyzed_at: new Date().toISOString() })
-            .eq('url', target.url);
+        const analysis = await analyzeUrl(target.url, { title: target.title, content: target.content });
+        await saveSuggestions(target.url, target.title, analysis.suggestions);
 
-          if (markErr) {
-            log.push(`    WARNING: analyzed_at update failed: ${markErr.message}`);
-          } else {
-            log.push(`    Marked analyzed: ${target.url}`);
-          }
+        const { error: markErr } = await getSupabase()
+          .from('pages')
+          .update({ analyzed_at: new Date().toISOString() })
+          .eq('url', target.url);
 
-          stats.analyzed++;
-          log.push(`    Saved ${analysis.suggestions.length} suggestion(s).`);
-        } catch (err) {
-          stats.errors++;
-          log.push(`    ERROR: ${err.message}`);
-          log.push(`    STACK: ${err.stack || '(no stack)'}`);
-          console.error('[/api/cron] Analysis error:', err);
+        if (markErr) {
+          log.push(`    WARNING: analyzed_at update failed: ${markErr.message}`);
+        } else {
+          log.push(`    Marked analyzed: ${target.url}`);
         }
+
+        stats.analyzed++;
+        log.push(`    Saved ${analysis.suggestions.length} suggestion(s).`);
       }
+    } catch (err) {
+      stats.errors++;
+      log.push(`  [ANALYZE ERROR] ${err.message}`);
+      log.push(`  [ANALYZE STACK] ${err.stack || '(no stack)'}`);
+      console.error('[cron error]', err.message, err.stack);
     }
 
     // ----- 7. Process deferred link checks on pending suggestions ------------
