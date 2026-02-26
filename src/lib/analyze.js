@@ -159,7 +159,7 @@ export async function analyzeUrl(url, preloaded = null) {
     .eq('url', url)
     .single();
 
-  if (pageRow?.keywords?.length >= 15) {
+  if (pageRow?.keywords?.length >= 5) {
     keywords = pageRow.keywords;
     console.log(`[analyzeUrl] Using ${keywords.length} cached keywords for ${url}`);
   } else {
