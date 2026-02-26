@@ -44,12 +44,13 @@ ${content.slice(0, 8000)}
 }
 
 /**
- * Extracts 25-30 keywords, phrases, and related terms from a blog post.
+ * Generates 3-5 short keyword variations for a page based on its title alone.
  * Used by analyzeUrl to search the sentences table for candidate backlinks.
+ * Results are cached in pages.keywords so Groq is called at most once per page.
  *
  * Returns: string[]
  */
-export async function extractKeywordsExpanded(pageContent) {
+export async function extractKeywordsExpanded(pageTitle) {
   const response = await groq.chat.completions.create({
     model: 'llama-3.3-70b-versatile',
     temperature: 0.3,
@@ -61,23 +62,22 @@ export async function extractKeywordsExpanded(pageContent) {
       },
       {
         role: 'user',
-        content: `Analyse the blog post below and return a JSON object with one key:
-- "keywords": an array of 25-30 keywords, phrases, synonyms, and related terms that represent the topics covered. Include both broad terms and specific phrases someone writing about related topics might naturally use in a sentence.
+        content: `Given this page title, generate 3-5 keyword variations that someone might use to reference this specific page's topic within another article. Keep them short and specific — 2-4 words each. For example for "Best Diet for Lipedema" you might generate: ["lipedema diet", "anti-inflammatory diet", "diet for lipedema", "lipedema nutrition", "best lipedema diet"].
 
-Blog post content:
----
-${pageContent.slice(0, 3000)}
----`,
+Return a JSON array of strings only.
+
+Page title: "${pageTitle}"`,
       },
     ],
   });
 
   const raw = response.choices[0].message.content.trim();
   try {
-    return JSON.parse(raw).keywords;
+    const parsed = JSON.parse(raw);
+    return Array.isArray(parsed) ? parsed : parsed.keywords ?? parsed;
   } catch {
-    const match = raw.match(/\{[\s\S]*\}/);
-    if (match) return JSON.parse(match[0]).keywords;
+    const match = raw.match(/\[[\s\S]*\]/);
+    if (match) return JSON.parse(match[0]);
     throw new Error(`Failed to parse keywords JSON from Groq: ${raw}`);
   }
 }

@@ -159,11 +159,11 @@ export async function analyzeUrl(url, preloaded = null) {
     .eq('url', url)
     .single();
 
-  if (pageRow?.keywords?.length >= 5) {
+  if (pageRow?.keywords?.length) {
     keywords = pageRow.keywords;
     console.log(`[analyzeUrl] Using ${keywords.length} cached keywords for ${url}`);
   } else {
-    keywords = await extractKeywordsExpanded(newPostContent);
+    keywords = await extractKeywordsExpanded(newPostTitle);
     const { error: kwErr } = await getSupabase()
       .from('pages')
       .update({ keywords })
