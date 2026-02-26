@@ -13,8 +13,6 @@ import {
 
 // Pages to scrape/backfill per run (shared budget for indexing + backfill).
 const MAX_INDEXING_PER_RUN = 2;
-// Pages to run backlink analysis on per run.
-const MAX_ANALYSIS_PER_RUN = 5;
 
 // Polite delay between HTTP scrapes (ms).
 const SCRAPE_DELAY_MS = 1500;
@@ -183,47 +181,39 @@ export async function GET(request) {
       await sleep(SCRAPE_DELAY_MS);
     }
 
-    // ----- 6. Auto-analyze pages that haven't been analyzed yet --------------
-    // Fetch a large pool so the JS skip-pattern filter has enough to work with.
-    const { data: unanalyzed, error: analyzeErr } = await getSupabase()
+    // ----- 6. Analyze one unanalyzed page as the target ---------------------
+    // Fetch a small pool to account for pages excluded by skip-patterns.
+    const { data: unanalyzedPool, error: analyzeErr } = await getSupabase()
       .from('pages')
       .select('url, title, content')
       .is('analyzed_at', null)
       .not('content', 'is', null)
-      .order('created_at', { ascending: false })
-      .limit(100);
+      .order('created_at', { ascending: true })
+      .limit(20);
 
     if (analyzeErr) {
       log.push(`  Auto-analyze skipped: ${analyzeErr.message}`);
     } else {
-      log.push(`  Auto-analyze: query returned ${(unanalyzed || []).length} unanalyzed page(s) with content.`);
+      // Pick the first content page from the pool.
+      const target = (unanalyzedPool || []).find((p) => isContentPage(p.url));
 
-      const toAnalyze = (unanalyzed || [])
-        .filter((p) => isContentPage(p.url))
-        .slice(0, MAX_ANALYSIS_PER_RUN);
-
-      log.push(`  After skip-pattern filter: ${toAnalyze.length} queued, ${(unanalyzed || []).filter(p => !isContentPage(p.url)).length} excluded by URL pattern.`);
-      if (toAnalyze.length > 0) {
-        log.push(`  First candidate: ${toAnalyze[0].url}`);
+      if (!target) {
+        log.push(`  Auto-analyze: no unanalyzed content pages found.`);
       } else {
-        log.push(`  Sample unanalyzed URLs: ${(unanalyzed || []).slice(0, 5).map(p => p.url).join(', ')}`);
-      }
-
-      for (const page of toAnalyze) {
+        log.push(`  [ANALYZE] ${target.url}`);
         try {
-          log.push(`  [ANALYZE] ${page.url}`);
-          const analysis = await analyzeUrl(page.url, { title: page.title, content: page.content });
-          await saveSuggestions(page.url, page.title, analysis.suggestions);
+          const analysis = await analyzeUrl(target.url, { title: target.title, content: target.content });
+          await saveSuggestions(target.url, target.title, analysis.suggestions);
 
           const { error: markErr } = await getSupabase()
             .from('pages')
             .update({ analyzed_at: new Date().toISOString() })
-            .eq('url', page.url);
+            .eq('url', target.url);
 
           if (markErr) {
-            log.push(`    WARNING: analyzed_at update failed for ${page.url}: ${markErr.message}`);
+            log.push(`    WARNING: analyzed_at update failed: ${markErr.message}`);
           } else {
-            log.push(`    Marked analyzed: ${page.url}`);
+            log.push(`    Marked analyzed: ${target.url}`);
           }
 
           stats.analyzed++;
