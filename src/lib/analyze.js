@@ -186,22 +186,10 @@ export async function analyzeUrl(url, preloaded = null) {
   if (!matchingSentences?.length) return { newPostTitle, keywords, suggestions: [] };
 
   // Step 3: Filter non-content pages and pick one sentence per source page.
-  // Anchor text is derived from the longest multi-word keyword that appears in the sentence.
-  // Single-word and generic terms are excluded. Sentences with no valid anchor are skipped.
-  // No page fetching here — link checking is deferred to processLinkChecks.
-  const GENERIC_TERMS = new Set([
-    'lipedema', 'lipoedema', 'condition', 'conditions', 'symptom', 'symptoms',
-    'women', 'woman', 'treatment', 'treatments', 'pain', 'legs', 'fat',
-    'health', 'body', 'disease', 'disorder', 'diagnosis',
-  ]);
-
+  // Anchor text is the first keyphrase that appears in the sentence (longest first).
+  // Keywords are already specific title-derived phrases — no extra filtering needed.
   const lowerKeywords = keywords
     .map((kw) => kw.toLowerCase().trim())
-    .filter((kw) => {
-      const words = kw.split(/\s+/);
-      // Must be at least 2 words and not a single generic term
-      return words.length >= 2 && !GENERIC_TERMS.has(kw);
-    })
     .sort((a, b) => b.length - a.length); // longest first for anchor text priority
 
   const targetNormalized = normalizeUrl(url);

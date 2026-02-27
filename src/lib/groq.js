@@ -44,16 +44,17 @@ ${content.slice(0, 8000)}
 }
 
 /**
- * Generates 3-5 short keyword variations for a page based on its title alone.
- * Used by analyzeUrl to search the sentences table for candidate backlinks.
+ * Generates 2-3 exact keyphrases for a page based on its title alone.
+ * These are the most specific phrases someone would naturally use when
+ * referencing this page's topic in another article.
  * Results are cached in pages.keywords so Groq is called at most once per page.
  *
- * Returns: string[]
+ * Returns: string[] (lowercase)
  */
 export async function extractKeywordsExpanded(pageTitle) {
   const response = await groq.chat.completions.create({
     model: 'llama-3.3-70b-versatile',
-    temperature: 0.3,
+    temperature: 0.2,
     messages: [
       {
         role: 'system',
@@ -62,9 +63,19 @@ export async function extractKeywordsExpanded(pageTitle) {
       },
       {
         role: 'user',
-        content: `Given this page title, generate 3-5 keyword variations that someone might use to reference this specific page's topic within another article. Keep them short and specific — 2-4 words each. For example for "Best Diet for Lipedema" you might generate: ["lipedema diet", "anti-inflammatory diet", "diet for lipedema", "lipedema nutrition", "best lipedema diet"].
+        content: `Given this page title, return exactly 2-3 keyphrases that someone would naturally use when referencing this specific topic in another article. Extract them directly from the title — do not invent new phrases. All lowercase.
 
-Return a JSON array of strings only.
+Rules:
+- Use the most specific phrase from the title as the first entry
+- For "X vs Y" or "X and Y" titles, also include a version with "and" instead of "vs" (or vice versa), and the secondary term alone if it stands on its own
+- Never include generic single words like "lipedema" alone unless it is part of a longer phrase
+- Return a JSON array of strings only
+
+Examples:
+- "Lipedema vs Lymphedema" → ["lipedema vs lymphedema", "lipedema and lymphedema", "lymphedema"]
+- "Best Diet for Lipedema" → ["diet for lipedema", "lipedema diet"]
+- "Can You Lose Weight With Lipedema" → ["lose weight with lipedema", "weight loss with lipedema"]
+- "HRT and Lipedema" → ["hrt and lipedema", "hormone therapy and lipedema", "hrt"]
 
 Page title: "${pageTitle}"`,
       },
