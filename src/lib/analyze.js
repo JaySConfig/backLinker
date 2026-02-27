@@ -177,7 +177,7 @@ export async function analyzeUrl(url, preloaded = null) {
 
   const { data: matchingSentences, error: dbError } = await getSupabase()
     .from('sentences')
-    .select('page_url, page_title, sentence')
+    .select('page_url, page_title, sentence, existing_links')
     .or(ilikeFilters)
     .neq('page_url', url)
     .limit(200);
@@ -204,12 +204,16 @@ export async function analyzeUrl(url, preloaded = null) {
     })
     .sort((a, b) => b.length - a.length); // longest first for anchor text priority
 
+  const targetNormalized = normalizeUrl(url);
   const seenSources = new Set();
   const suggestions = [];
 
   for (const s of matchingSentences) {
     if (!isContentPage(s.page_url)) continue;
     if (seenSources.has(s.page_url)) continue;
+
+    // Skip if the target URL is already linked within this sentence.
+    if (s.existing_links?.includes(targetNormalized)) continue;
 
     const lowerSentence = s.sentence.toLowerCase();
     const anchorText = lowerKeywords.find((kw) => lowerSentence.includes(kw));

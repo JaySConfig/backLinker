@@ -3,6 +3,8 @@
  *
  * Clears the sentences table and repopulates it by fetching each page live,
  * parsing only <p>, <h2>, <h3> tags via cheerio, and applying strict filters.
+ * Stores existing_links (normalised hrefs found within each sentence element)
+ * so the analyzer can skip sentences that already link to the target.
  *
  *   node scripts/buildSentences.js
  */
@@ -40,10 +42,25 @@ const SKIP_PATTERNS = [
 ];
 const isContentPage = (url) => !SKIP_PATTERNS.some((p) => url.includes(p));
 
-// Site name fragments to reject
 const SITE_NAME_FRAGMENTS = ['lipedema and me', 'lipedemaandme'];
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+
+// ---------------------------------------------------------------------------
+// URL normalisation (mirrors analyze.js)
+// ---------------------------------------------------------------------------
+function normalizeUrl(href, baseUrl) {
+  try {
+    const parsed = new URL(href, baseUrl);
+    return (parsed.origin + parsed.pathname)
+      .toLowerCase()
+      .replace(/^http:\/\//, 'https://')
+      .replace(/^https:\/\/www\./, 'https://')
+      .replace(/\/$/, '');
+  } catch {
+    return null;
+  }
+}
 
 // ---------------------------------------------------------------------------
 // Fetch raw HTML for a URL
@@ -58,15 +75,25 @@ async function fetchHtml(url) {
 }
 
 // ---------------------------------------------------------------------------
-// Extract clean text blocks from raw HTML — only <p>, <h2>, <h3>
+// Extract { text, links } blocks from raw HTML — only <p>, <h2>, <h3>
+// links = normalised hrefs of any <a> tags found within that element
 // ---------------------------------------------------------------------------
-function extractTextBlocks(html) {
+function extractBlocks(html, pageUrl) {
   const $ = cheerio.load(html);
   const blocks = [];
 
   $('p, h2, h3').each((_, el) => {
     const text = $(el).text().replace(/\s+/g, ' ').trim();
-    if (text) blocks.push(text);
+    if (!text) return;
+
+    const links = [];
+    $(el).find('a[href]').each((_, a) => {
+      const href = $(a).attr('href');
+      const normalized = href ? normalizeUrl(href, pageUrl) : null;
+      if (normalized) links.push(normalized);
+    });
+
+    blocks.push({ text, links });
   });
 
   return blocks;
@@ -77,23 +104,14 @@ function extractTextBlocks(html) {
 // ---------------------------------------------------------------------------
 function isUsableSentence(sentence) {
   const words = sentence.trim().split(/\s+/);
-
-  // Minimum 15 words
   if (words.length < 15) return false;
 
   const lower = sentence.toLowerCase();
-
-  // Reject sentences containing a pipe character
   if (sentence.includes('|')) return false;
-
-  // Reject navigation / meta copy
   if (lower.includes('skip to content')) return false;
-
-  // Reject sentences containing the site name
   if (SITE_NAME_FRAGMENTS.some((f) => lower.includes(f))) return false;
 
-  // Reject sentences that look like a list of links:
-  // heuristic — more than 40% of words start with a capital letter
+  // Reject link-list sentences: >40% of words start with a capital
   const capitalizedWords = words.filter((w) => /^[A-Z]/.test(w)).length;
   if (capitalizedWords / words.length > 0.4) return false;
 
@@ -101,21 +119,23 @@ function isUsableSentence(sentence) {
 }
 
 // ---------------------------------------------------------------------------
-// Split text blocks into filtered sentences
+// Split blocks into filtered sentence rows, carrying the block's links
 // ---------------------------------------------------------------------------
-function extractSentences(html) {
-  const blocks = extractTextBlocks(html);
-  const sentences = [];
+function extractSentences(html, pageUrl) {
+  const blocks = extractBlocks(html, pageUrl);
+  const rows = [];
 
-  for (const block of blocks) {
-    const parts = block.split(/(?<=[.!?])\s+/);
+  for (const { text, links } of blocks) {
+    const parts = text.split(/(?<=[.!?])\s+/);
     for (const part of parts) {
       const s = part.trim();
-      if (isUsableSentence(s)) sentences.push(s);
+      if (isUsableSentence(s)) {
+        rows.push({ sentence: s, existing_links: links });
+      }
     }
   }
 
-  return sentences;
+  return rows;
 }
 
 // ---------------------------------------------------------------------------
@@ -147,7 +167,9 @@ async function main() {
   }
 
   const contentPages = pages.filter((p) => isContentPage(p.url));
-  console.log(`${contentPages.length} content page(s) to process (${pages.length - contentPages.length} skipped by URL pattern).\n`);
+  console.log(
+    `${contentPages.length} content page(s) to process (${pages.length - contentPages.length} skipped by URL pattern).\n`,
+  );
 
   let populated = 0;
   let skipped = 0;
@@ -167,7 +189,7 @@ async function main() {
       continue;
     }
 
-    const sentences = extractSentences(html);
+    const sentences = extractSentences(html, page.url);
 
     if (!sentences.length) {
       console.log('  No usable sentences — skipping.');
@@ -176,10 +198,11 @@ async function main() {
       continue;
     }
 
-    const rows = sentences.map((sentence) => ({
+    const rows = sentences.map(({ sentence, existing_links }) => ({
       page_url: page.url,
       page_title: page.title,
       sentence,
+      existing_links,
     }));
 
     const { error: insErr } = await supabase.from('sentences').insert(rows);
@@ -188,11 +211,12 @@ async function main() {
       console.log(`  Insert failed: ${insErr.message}`);
       failed++;
     } else {
-      console.log(`  ${sentences.length} sentence(s) stored.`);
+      const linked = rows.filter((r) => r.existing_links.length > 0).length;
+      console.log(`  ${sentences.length} sentence(s) stored (${linked} with existing links).`);
       populated++;
     }
 
-    await sleep(800); // polite delay between requests
+    await sleep(800);
   }
 
   console.log('\n── Done ──');

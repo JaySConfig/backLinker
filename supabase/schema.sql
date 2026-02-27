@@ -61,12 +61,16 @@ alter table suggestions add column if not exists link_checked boolean not null d
 create extension if not exists pg_trgm;
 
 create table if not exists sentences (
-  id          bigserial primary key,
-  page_url    text not null,
-  page_title  text,
-  sentence    text not null,
-  created_at  timestamptz default now()
+  id             bigserial primary key,
+  page_url       text not null,
+  page_title     text,
+  sentence       text not null,
+  existing_links text[] not null default '{}',  -- normalised hrefs already in this sentence
+  created_at     timestamptz default now()
 );
+
+-- If the table already exists, add the column without recreating it:
+alter table sentences add column if not exists existing_links text[] not null default '{}';
 
 -- Trigram index for fast ilike keyword searches across sentence text.
 create index if not exists sentences_sentence_trgm
