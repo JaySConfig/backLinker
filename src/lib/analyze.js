@@ -201,7 +201,10 @@ export async function analyzeUrl(url, preloaded = null) {
     if (seenSources.has(s.page_url)) continue;
 
     // Skip if the target URL is already linked within this sentence.
-    if (s.existing_links?.includes(targetNormalized)) continue;
+    if (s.existing_links?.includes(targetNormalized)) {
+      console.log(`SKIPPED existing link: ${s.sentence} | target: ${targetNormalized} | existing_links: ${JSON.stringify(s.existing_links)}`);
+      continue;
+    }
 
     const lowerSentence = s.sentence.toLowerCase();
     const anchorText = lowerKeywords.find((kw) => lowerSentence.includes(kw));
