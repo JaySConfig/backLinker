@@ -172,25 +172,30 @@ export async function analyzeUrl(url, preloaded = null) {
     console.log(`[analyzeUrl] Generated and cached ${keywords.length} keywords for ${url}`);
   }
 
-  // Step 2: Search the sentences table for keyword matches across all other pages.
-  const ilikeFilters = keywords.map((kw) => `sentence.ilike.%${kw}%`).join(',');
+  // Prepare lowercased keywords — used for JS matching and anchor text selection.
+  // Sort longest-first so the most specific phrase wins as anchor text.
+  const lowerKeywords = keywords
+    .map((kw) => kw.toLowerCase().trim())
+    .sort((a, b) => b.length - a.length);
 
-  const { data: matchingSentences, error: dbError } = await getSupabase()
+  // Step 2: Fetch all sentences from other pages and match keywords in JavaScript.
+  // This avoids Supabase ilike filter parsing issues with special characters in keywords.
+  const { data: allSentences, error: dbError } = await getSupabase()
     .from('sentences')
     .select('page_url, page_title, sentence, existing_links')
-    .or(ilikeFilters)
-    .neq('page_url', url)
-    .limit(200);
+    .neq('page_url', url);
 
   if (dbError) throw new Error(`Supabase query failed: ${dbError.message}`);
-  if (!matchingSentences?.length) return { newPostTitle, keywords, suggestions: [] };
+  if (!allSentences?.length) return { newPostTitle, keywords, suggestions: [] };
+
+  const matchingSentences = allSentences.filter((s) =>
+    lowerKeywords.some((kw) => s.sentence.toLowerCase().includes(kw)),
+  );
+
+  if (!matchingSentences.length) return { newPostTitle, keywords, suggestions: [] };
 
   // Step 3: Filter non-content pages and pick one sentence per source page.
   // Anchor text is the first keyphrase that appears in the sentence (longest first).
-  // Keywords are already specific title-derived phrases — no extra filtering needed.
-  const lowerKeywords = keywords
-    .map((kw) => kw.toLowerCase().trim())
-    .sort((a, b) => b.length - a.length); // longest first for anchor text priority
 
   const targetNormalized = normalizeUrl(url);
   const seenSources = new Set();
