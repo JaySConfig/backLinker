@@ -1,13 +1,12 @@
 export const revalidate = 0;
 
+import Link from 'next/link';
 import { getSupabase } from '@/lib/supabase';
-import AnalyzeForm from './AnalyzeForm';
-import SuggestionsList from './SuggestionsList';
 
-async function getSuggestionGroups() {
+async function getPageSummaries() {
   const { data, error } = await getSupabase()
     .from('suggestions')
-    .select('*')
+    .select('target_url, target_title, status')
     .order('created_at', { ascending: false });
 
   if (error) {
@@ -15,49 +14,67 @@ async function getSuggestionGroups() {
     return [];
   }
 
-  // Group by target_url, preserving the created_at order of first occurrence.
   const map = new Map();
   for (const row of data) {
     if (!map.has(row.target_url)) {
       map.set(row.target_url, {
         targetUrl: row.target_url,
         targetTitle: row.target_title,
-        suggestions: [],
+        pending: 0,
+        total: 0,
       });
     }
-    map.get(row.target_url).suggestions.push(row);
+    const entry = map.get(row.target_url);
+    entry.total++;
+    if (row.status === 'pending') entry.pending++;
   }
 
-  return [...map.values()];
+  // Sort: pages with pending suggestions first, then by total count.
+  return [...map.values()].sort((a, b) => b.pending - a.pending || b.total - a.total);
 }
 
 export default async function Home() {
-  const groups = await getSuggestionGroups();
-
-  const totalPending = groups.reduce(
-    (n, g) => n + g.suggestions.filter((s) => s.status === 'pending').length,
-    0,
-  );
+  const pages = await getPageSummaries();
+  const totalPending = pages.reduce((n, p) => n + p.pending, 0);
 
   return (
     <main className="container">
-      <h1>BackLinker</h1>
-      <p className="subtitle">
-        Paste a newly published post URL to find internal linking opportunities across your site.
-      </p>
-
-      <AnalyzeForm />
-
-      <div className="dashboard-section">
-        <div className="dashboard-header">
-          <span className="dashboard-title">Saved Suggestions</span>
-          {totalPending > 0 && (
-            <span className="pending-badge">{totalPending} pending</span>
-          )}
-        </div>
-
-        <SuggestionsList groups={groups} />
+      <div className="dashboard-header">
+        <h1>BackLinker</h1>
+        {totalPending > 0 && (
+          <span className="pending-badge">{totalPending} pending</span>
+        )}
       </div>
+      <p className="subtitle">Internal linking suggestions grouped by target page.</p>
+
+      {pages.length === 0 ? (
+        <div className="no-suggestions">
+          No suggestions yet. The cron will populate this automatically.
+        </div>
+      ) : (
+        <div className="page-list">
+          {pages.map((p) => (
+            <Link
+              key={p.targetUrl}
+              href={`/suggestions/${encodeURIComponent(p.targetUrl)}`}
+              className="page-card"
+            >
+              <div className="page-card-body">
+                <span className="page-card-title">{p.targetTitle || p.targetUrl}</span>
+                <span className="page-card-url">{p.targetUrl}</span>
+              </div>
+              <div className="page-card-meta">
+                {p.pending > 0 ? (
+                  <span className="pending-badge">{p.pending} pending</span>
+                ) : (
+                  <span className="all-done-badge">done</span>
+                )}
+                <span className="page-card-arrow">→</span>
+              </div>
+            </Link>
+          ))}
+        </div>
+      )}
     </main>
   );
 }

@@ -172,10 +172,14 @@ export async function analyzeUrl(url, preloaded = null) {
     console.log(`[analyzeUrl] Generated and cached ${keywords.length} keywords for ${url}`);
   }
 
+  // Words that are too generic to be useful as keywords or anchor text.
+  const BLOCKED_KEYWORDS = new Set(['lipedema', 'lipoedema']);
+
   // Prepare lowercased keywords — used for JS matching and anchor text selection.
-  // Sort longest-first so the most specific phrase wins as anchor text.
+  // Filter out single-word keywords and blocked terms. Sort longest-first.
   const lowerKeywords = keywords
     .map((kw) => kw.toLowerCase().trim())
+    .filter((kw) => kw.split(/\s+/).length >= 2 && !BLOCKED_KEYWORDS.has(kw))
     .sort((a, b) => b.length - a.length);
 
   // Step 2: Fetch all sentences from other pages and match keywords in JavaScript.
