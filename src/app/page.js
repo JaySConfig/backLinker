@@ -44,6 +44,7 @@ export default async function Home() {
         {totalPending > 0 && (
           <span className="pending-badge">{totalPending} pending</span>
         )}
+        <Link href="/search" className="search-link">Search sentences</Link>
       </div>
       <p className="subtitle">Internal linking suggestions grouped by target page.</p>
 
